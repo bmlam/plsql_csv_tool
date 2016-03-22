@@ -12,4 +12,4 @@ To use, look at one of the two test scripts:
 test-pkg_utl_csv-insert2table-create_tab.sql
 test-pkg_utl_csv-insert2table.sql
 
-The former instructs to create the target table before loading data. In this case all columns are defined as varchar2 but you can specify a uniform length of all columns. The latter assume the table with the proper column names and data types already exists.
+The former instructs to create the target table before loading data. In this case all columns are defined as varchar2 but you can specify a uniform length of all columns. The latter assume the table with the proper column names and data types already exists. For convenience, a CREATE TABLE DDL statement is included before calling the PLSQL code.
