@@ -13,3 +13,10 @@ test-pkg_utl_csv-insert2table-create_tab.sql
 test-pkg_utl_csv-insert2table.sql
 
 The former instructs to create the target table before loading data. In this case all columns are defined as varchar2 but you can specify a uniform length of all columns. The latter assume the table with the proper column names and data types already exists. For convenience, a CREATE TABLE DDL statement is included before calling the PLSQL code.
+
+Notes: The package body contains calls to the utility procedures which exist in my environment. When publishing this package to the world, I did not feel like removing them since they are useful for debugging. For I did instead is defining dummy procedures within the package with the same name. For the same reason, many procedures have the exception handler block which calls these procedures. The drawback is that when an error pops up, it is not easy to spot on the which line of code the exception is raised initially. You may want to remove the exception handlers.
+
+
+Common errors:
+
+  ORA-01741: illegal zero-length identifier -> Usually it is because you forget to specify the target column names as the first line of the CSV string.
