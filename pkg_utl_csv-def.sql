@@ -54,6 +54,12 @@ PROCEDURE insert2table (
    end;
 ***************************************************************/ 
 ;
+FUNCTION gen_update_for_unquoting( 
+   p_target_object       VARCHAR2
+ , p_target_column       VARCHAR2
+ , p_target_schema       VARCHAR2 DEFAULT user
+) RETURN VARCHAR2 
+;
 END;
 /
 

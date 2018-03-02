@@ -373,6 +373,33 @@ BEGIN
 
 END insert2table;
 
+FUNCTION gen_update_for_unquoting( 
+   p_target_object       VARCHAR2
+ , p_target_column       VARCHAR2
+ , p_target_schema       VARCHAR2 DEFAULT user
+) RETURN VARCHAR2 
+AS
+   l_prolog VARCHAR2(1000);
+   l_stmt VARCHAR2(1000);
+BEGIN
+   l_prolog :=
+    'UPDATE '||p_target_schema||'.'||p_target_object||CHR(10)
+   ||' SET '||p_target_column||' = '
+   ;
+   l_stmt := 
+   l_prolog
+   || q'[ REPLACE ( <column>, '""', '"' ) ]' ||CHR(10)
+   || q'[ WHERE <column> LIKE '%""%' ; ]'||CHR(10)
+   ||l_prolog
+   || q'[ SUBSTR(<column>, 2 ) ]'||CHR(10)
+   || q'[ WHERE <column> LIKE '"%'; ]'||CHR(10)
+   ||l_prolog
+   || q'[ SUBSTR(<column>, 1, LENGTH( <column> ) - 1 ) ]'||CHR(10)
+   || q'[ WHERE SUBSTR( <column>, -1 ) =  '"'; ]'||CHR(10)
+   ;
+   RETURN REPLACE(l_stmt, '<column>', p_target_column );
+END gen_update_for_unquoting;
+
 end; -- package 
 /
 
