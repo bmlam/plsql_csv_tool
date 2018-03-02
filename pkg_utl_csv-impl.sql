@@ -98,17 +98,21 @@ EXCEPTION
       AS
 	  lc_cntxt constant varchar2(61) := gc_pkg_name||'.get_column_dtype_map';
       ltab_return t_column_dtype_map;
+      l_column_dbx VARCHAR2(100);
    begin
     for i in 1 .. ptab_column.count loop
-    select data_type into ltab_return( ptab_column (i) )
-    from all_tab_columns
-    where table_name = p_table
-      and owner = p_schema
-      and column_name = ptab_column(i)
-      ;
+       l_column_dbx := p_table||'.'||ptab_column(i);
+       select data_type into ltab_return( ptab_column (i) )
+       from all_tab_columns
+       where table_name = p_table
+         and owner = p_schema
+         and column_name = ptab_column(i)
+         ;
     end loop; -- over ptab_column
     return ltab_return;
 EXCEPTION
+   WHEN NO_DATA_FOUND THEN
+      RAISE_APPLICATION_ERROR( -20000, 'Could not determine data type for '||l_column_dbx );
    WHEN OTHERS THEN
 	logerror(lc_cntxt, sqlcode, dbms_utility.format_error_backtrace);
       raise;
@@ -366,15 +370,10 @@ BEGIN
 	||l_nls_sess_date_format
 	||''''
 	;
-EXCEPTION
-   WHEN OTHERS THEN
-	logerror(lc_cntxt, sqlcode, dbms_utility.format_error_backtrace);
-      ROLLBACK;
-      raise;
+
 END insert2table;
 
 end; -- package 
-
 /
 
 SHOW errors
