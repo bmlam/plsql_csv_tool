@@ -11,7 +11,6 @@ as
    gc_dos_eol_len    CONSTANT PLS_INTEGER        := length/*c*/ (gc_dos_eol);
    gc_unix_eol_len   CONSTANT PLS_INTEGER        := length/*c*/ (gc_unix_eol);
    g_col_sep             varchar2(10) ;
-   g_col_sep_len             INTEGER ;
 
   type t_column_dtype_map is table of all_tab_columns.data_type%type index by varchar2(30);
   type t_column_dtype_tab is table of all_tab_columns.data_type%type ;
@@ -25,7 +24,7 @@ as
    end logerror;
    
    procedure debug ( p1  varchar2, p2 varchar2) as
-   begin null;
+   begin dbms_output.put_line(p2);
    end debug;
    
       /**************************************************************/
@@ -61,23 +60,24 @@ as
       l_scan_pos    INTEGER            := 1;
       l_column      LONG;
       ltab_column   DBMS_SQL.varchar2a;
+      lc_col_sep_len CONSTANT INTEGER := LENGTH( g_col_sep );
    BEGIN
       debug(lc_cntxt,'l_line_len: '||l_line_len||' First 10 chars: '||substr(p_line, 1,10) );
       WHILE l_scan_pos < l_line_len LOOP
          l_sep_pos := INSTR (p_line, g_col_sep, l_scan_pos);
-		debug(lc_cntxt, 'l_scan_pos: '||to_char(l_scan_pos) ||' l_sep_pos: '||to_char(l_sep_pos) );
+         debug(lc_cntxt, 'line:'||$$plsql_line||' l_scan_pos: '||to_char(l_scan_pos) ||' l_sep_pos: '||to_char(l_sep_pos) );
          l_column :=
             CASE
                WHEN l_sep_pos > 0 THEN substr/*c*/ (p_line, l_scan_pos, l_sep_pos - l_scan_pos)
                ELSE substr/*c*/ (p_line, l_scan_pos)
             END;
          ltab_column (ltab_column.COUNT + 1) := l_column;
-         debug(lc_cntxt, 'l_column=' || substr(l_column, 1, 30)||case when length(l_column) > 30 then '..' end  );
+         debug(lc_cntxt, 'line:'||$$plsql_line||' l_column=' || substr(l_column, 1, 30)||case when length(l_column) > 30 then '..' end  );
          l_scan_pos := l_scan_pos + 
-		case when l_column is not null then length/*c*/ (l_column) else 0 end
-		+ g_col_sep_len;
-		debug(lc_cntxt, 'l_scan_pos: '||l_scan_pos);
-	END LOOP;
+            case when l_column is not null then length/*c*/ (l_column) else 0 end
+            + lc_col_sep_len;
+         debug(lc_cntxt, 'line:'||$$plsql_line||' l_scan_pos: '||l_scan_pos);
+      END LOOP;
 		debug(lc_cntxt, 'returning ltab_column.count: '||ltab_column.count);
 
       RETURN ltab_column;
@@ -118,7 +118,7 @@ EXCEPTION
       raise;
    end get_column_dtype_map;
    
-   /**************************************************************/
+/**************************************************************/
 PROCEDURE insert2table (
    p_csv_string                        VARCHAR2
  , p_target_object                     VARCHAR2
@@ -201,8 +201,7 @@ BEGIN
 		||' p_standalone_head_line ='||p_standalone_head_line
    );
    --
-   g_col_sep                         := p_col_sep;
-   g_col_sep_len                     := length/*c*/ (p_col_sep);
+   g_col_sep                         := p_col_sep; 
    i$reset_line_cur;
    -- get the column names from the first line
 	if p_standalone_head_line is null then
@@ -399,6 +398,79 @@ BEGIN
    ;
    RETURN REPLACE(l_stmt, '<column>', p_target_column );
 END gen_update_for_unquoting;
+
+/**************************************************************/
+
+FUNCTION get_ext_table_ddl (
+   p_header_line varchar2 
+ , p_target_object     VARCHAR2 DEFAULT NULL
+ , p_file_name         VARCHAR2 DEFAULT NULL
+ , p_ora_directory     VARCHAR2 DEFAULT NULL
+ , p_col_sep varchar2 default ';' 
+ , p_rec_sep varchar2 default CHR(10) 
+ , p_create_column_length integer default 1000
+)
+RETURN VARCHAR2
+--
+AS
+  lc_procname constant varchar2(61) :='get_ext_table_ddl';
+  lc_cntxt constant varchar2(61) := gc_pkg_name||'.'||lc_procname;
+   ltab_col_nam               DBMS_SQL.varchar2a;
+   l_column_list_source VARCHAR2(4000 CHAR);
+   l_column_list_target VARCHAR2(4000 CHAR);
+   l_rec_sep_code INTEGER;
+   l_ddl_template CONSTANT VARCHAR2(32000 CHAR) := 
+q'{CREATE TABLE <table_name> ( 
+   <column_list_target>
+)
+ORGANIZATION EXTERNAL (
+  TYPE ORACLE_LOADER
+  DEFAULT DIRECTORY <directory>
+  ACCESS PARAMETERS (
+    RECORDS DELIMITED BY <rec_sep>
+    FIELDS TERMINATED BY <col_sep> OPTIONALLY ENCLOSED BY '"'
+      ( <column_list_source>
+      )
+    )
+    LOCATION (
+      <file_name>
+    )
+)
+}';
+   l_ddl VARCHAR2(32000 CHAR);
+BEGIN 
+   g_col_sep  := p_col_sep;   
+	ltab_col_nam := get_all_columns (p_header_line);
+	for i in 1 .. ltab_col_nam.count loop
+      dbms_output.put_line( 'line '||$$plsql_line||' i:'||i );
+      IF i > 1 THEN
+         l_column_list_target := l_column_list_target ||', ';
+         l_column_list_source := l_column_list_source ||', ';
+         dbms_output.put_line( 'line '||$$plsql_line||' i:'||i ||' l_column_list_target:'||l_column_list_target );
+      END IF;
+		l_column_list_source:= l_column_list_source||quote_str( ltab_col_nam(i) )||' CHAR('||p_create_column_length||')';
+		l_column_list_target:= l_column_list_target||quote_str( ltab_col_nam(i) )||' VARCHAR2('||p_create_column_length||')';
+	end loop; -- over column names
+   l_ddl := REPLACE( l_ddl_template, '<table_name>', p_target_object );
+   --
+   l_ddl := REPLACE( l_ddl, '<col_sep>', quote_str( p_col_sep, '''' ) );
+   l_ddl := REPLACE( l_ddl, '<column_list_source>', l_column_list_source );
+   l_ddl := REPLACE( l_ddl, '<column_list_target>', l_column_list_target );
+   --
+   IF LENGTH( p_rec_sep ) > 1 OR LENGTH( p_rec_sep ) IS NULL THEN
+      RAISE_APPLICATION_ERROR( -20001, 'Currently we only support record separator with length of 1 character!' );
+   END IF;
+   l_rec_sep_code := ASCII( SUBSTR(p_rec_sep, 1, 1))
+   ;
+   l_ddl := REPLACE( l_ddl, '<rec_sep>', '0x'||quote_str( l_rec_sep_code, '''' ) );
+   IF p_ora_directory IS NOT NULL THEN
+      l_ddl := REPLACE( l_ddl, '<file_name>', quote_str( p_file_name, '''' ) );
+   END IF;
+   IF p_file_name IS NOT NULL THEN
+      l_ddl := REPLACE( l_ddl, '<directory>', p_ora_directory );
+   END IF;
+   RETURN l_ddl;
+END get_ext_table_ddl;
 
 end; -- package 
 /
