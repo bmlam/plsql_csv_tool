@@ -16,6 +16,11 @@ as
   type t_column_dtype_map is table of all_tab_columns.data_type%type index by varchar2(30);
   type t_column_dtype_tab is table of all_tab_columns.data_type%type ;
    
+ PROCEDURE gp_set_num_chars_with_backup
+  (  p_new_decimal_point VARCHAR2
+   , po_old_value OUT VARCHAR2 ) -- forward declaration
+  ;
+  
    $IF $$logging_tool_available = 0 $THEN 
 	   procedure loginfo ( p1  varchar2, p2 varchar2) as
 	   begin null;
@@ -273,17 +278,8 @@ BEGIN
     p_table => p_target_object , ptab_column => ltab_col_nam
     );
 
-         /* save current numeric_chars setting before changing them
-    */
-	select value into l_nls_sess_num_chars
-	from nls_session_parameters
-	where parameter = 'NLS_NUMERIC_CHARACTERS'
-	;
-   execute immediate 'alter session set NLS_NUMERIC_CHARACTERS = '''
-	||case when p_decimal_point_char = ',' then ',.' else '.,' end
-	||''''
-	;
-
+  gp_set_num_chars_with_backup( p_new_decimal_point=> p_decimal_point_char, po_old_value => l_nls_sess_num_chars );
+  
 	select value into l_nls_sess_date_format
 	from nls_session_parameters
 	where parameter = 'NLS_DATE_FORMAT'
@@ -502,42 +498,81 @@ AS
 --grant read on directory csv_util_load_dir to service;
 -- test: exec dev_pkg_utl_csv.insert2table_from_file( 'test.txt', 'CSV_UTIL_LOAD_DIR',  'no such table' );
 
-  lc_cntxt CONSTANT VARCHAR2(100 CHAR) := gc_pkg_name||'.insert2table_from_file';
-  lc_32k_minus_1 CONSTANT INTEGER := 32767;
+  c_cntxt CONSTANT VARCHAR2(100 CHAR) := gc_pkg_name||'.insert2table_from_file';
+  c_32k_minus_1 CONSTANT INTEGER := 32767;
   v_fh UTL_FILE.FILE_TYPE;
   v_buf  VARCHAR2(32767 CHAR);
   v_ln_cnt NUMBER := 0;
   v_countdown NUMBER := COALESCE( p_max_records_expected, 10000 );
 
+  vtab_col_nam               DBMS_SQL.varchar2a;
+  vtab_col_val               DBMS_SQL.varchar2a;
+   v_insert2table_stmt              LONG;
+   v_cur                      INTEGER            := DBMS_SQL.open_cursor;
+   v_stat                     INTEGER;
+   v_nls_sess_num_chars varchar2(100);
+   v_nls_sess_date_format varchar2(100);
+   v_num_bind number;
+   v_sql long;
+ 
 BEGIN
 	loginfo( gc_pkg_name||'.'||$$plsql_line, 'file:'||p_file||' p_directory:'||p_directory );
-  v_fh:= UTL_FILE.FOPEN( location=>p_directory, filename=> p_file, open_mode=> 'R', max_linesize => lc_32k_minus_1
+  v_fh:= UTL_FILE.FOPEN( location=>p_directory, filename=> p_file, open_mode=> 'R', max_linesize => c_32k_minus_1
     );
   WHILE v_countdown >= 0 
   LOOP 
     BEGIN 
       UTL_FILE.GET_LINE(v_fh, v_buf);
       v_ln_cnt := v_ln_cnt + 1;
-      loginfo( lc_cntxt, 'input line '||v_ln_cnt||' len:'|| lengthc( v_buf)||' start with: '||substrc( v_buf, 1, 20) );
+      loginfo( c_cntxt, 'input line '||v_ln_cnt||' len:'|| lengthc( v_buf)||' start with: '||substrc( v_buf, 1, 20) );
     EXCEPTION
       WHEN no_data_found THEN 
-        loginfo( lc_cntxt, 'No more lines found after '||v_ln_cnt||' records');
+        loginfo( c_cntxt, 'No more lines found after '||v_ln_cnt||' records');
         v_countdown := 0; 
     END;
+
+    IF vtab_col_nam.COUNT = 0 THEN 
+      if p_standalone_head_line is null then
+        if length(v_buf) = 1 or v_buf is null  then
+          raise_application_error(-20000, 'the first line of the CSV text appears to be empty!');
+        end if; -- header line empty
+        vtab_col_nam := get_all_columns (v_buf);
+      else
+        vtab_col_nam := get_all_columns (p_standalone_head_line);
+      end if; -- check p_standalone_head_line
+      loginfo (c_cntxt, 'Col count: ' || vtab_col_nam.COUNT);
+    END IF; -- check column names are known
     v_countdown := v_countdown - 1;
     --dbms_output.put_line(v_buf);
   END LOOP; -- over lines 
   UTL_FILE.FCLOSE( v_fh );
-  loginfo( lc_cntxt, 'Lines found '||v_ln_cnt );
+  loginfo( c_cntxt, 'Lines found '||v_ln_cnt );
 EXCEPTION  
   WHEN OTHERS THEN 
-    logerror(lc_cntxt, sqlcode, dbms_utility.format_error_backtrace);
+    logerror(c_cntxt, sqlcode, dbms_utility.format_error_backtrace);
     IF utl_file.is_open( v_fh ) THEN 
       utl_file.fclose( v_fh );
     END IF;
     raise;
     
 END insert2table_from_file;
+  
+PROCEDURE gp_set_num_chars_with_backup
+  (  p_new_decimal_point VARCHAR2
+   , po_old_value OUT VARCHAR2 )
+AS
+BEGIN
+     /* save current numeric_chars setting before changing them
+      */
+    select value into po_old_value
+    from nls_session_parameters
+    where parameter = 'NLS_NUMERIC_CHARACTERS'
+    ;
+     execute immediate 'alter session set NLS_NUMERIC_CHARACTERS = '''
+    ||case when p_new_decimal_point = ',' then ',.' else '.,' end
+    ||''''
+    ;
+END gp_set_num_chars_with_backup;
 
 end; -- package 
 /
