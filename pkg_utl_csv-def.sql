@@ -1,4 +1,4 @@
-CREATE OR REPLACE PACKAGE Pkg_utl_csv 
+CREATE OR REPLACE PACKAGE dev_Pkg_utl_csv 
 AUTHID CURRENT_USER 
 as
 /* **************************************************************************
@@ -60,6 +60,18 @@ FUNCTION gen_update_for_unquoting(
  , p_target_schema       VARCHAR2 DEFAULT user
 ) RETURN VARCHAR2 
 ;
+
+
+FUNCTION get_ext_table_ddl (
+   p_header_line varchar2 
+ , p_target_object     VARCHAR2 DEFAULT NULL
+ , p_file_name         VARCHAR2 DEFAULT NULL
+ , p_ora_directory     VARCHAR2 DEFAULT NULL
+ , p_col_sep varchar2 default ';' 
+ , p_rec_sep varchar2 default CHR(10) 
+ , p_create_column_length integer default 1000
+)
+RETURN VARCHAR2
 /* **************************************************************************
 * this function generates a DDL statemet for creating an external table.
 * It is useful when your CSV data is larger than 32K so that it cannot be passed as a literal
@@ -77,16 +89,21 @@ FUNCTION gen_update_for_unquoting(
 *  p_header_line  the head line containing the column names of the CSV file
 * 
 /**************************************************************/
-FUNCTION get_ext_table_ddl (
-   p_header_line varchar2 
- , p_target_object     VARCHAR2 DEFAULT NULL
- , p_file_name         VARCHAR2 DEFAULT NULL
- , p_ora_directory     VARCHAR2 DEFAULT NULL
+;
+
+PROCEDURE insert2table_from_file (
+   p_file                              VARCHAR2
+ , p_directory                         VARCHAR2
+ , p_target_object                     VARCHAR2
+ , p_target_schema                     VARCHAR2 DEFAULT user
+ , p_delete_before_insert2table              BOOLEAN DEFAULT TRUE
  , p_col_sep varchar2 default ';' 
- , p_rec_sep varchar2 default CHR(10) 
- , p_create_column_length integer default 1000
+ , p_decimal_point_char varchar2 default '.'
+ , p_date_format varchar2 default 'dd.mm.yyyy'
+ , p_create_table boolean default false
+ , p_create_column_length integer default 100
+ , p_standalone_head_line varchar2 default null
 )
-RETURN VARCHAR2
 ;
 
 END;

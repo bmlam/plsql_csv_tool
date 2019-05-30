@@ -472,6 +472,39 @@ BEGIN
    RETURN l_ddl;
 END get_ext_table_ddl;
 
+
+  /**************************************************************/
+PROCEDURE insert2table_from_file (
+   p_file                              VARCHAR2
+ , p_directory                         VARCHAR2
+ , p_target_object                     VARCHAR2
+ , p_target_schema                     VARCHAR2 DEFAULT user
+ , p_delete_before_insert2table              BOOLEAN DEFAULT TRUE
+ , p_col_sep varchar2 default ';' 
+ , p_decimal_point_char varchar2 default '.'
+ , p_date_format varchar2 default 'dd.mm.yyyy'
+ , p_create_table boolean default false
+ , p_create_column_length integer default 100
+ , p_standalone_head_line varchar2 default null
+)
+--
+AS
+   /**************************************************************/
+-- Setup to  be done by DBA: 
+--create directory csv_util_load_dir as '/oradata/csv_util_load';
+--grant read on directory csv_util_load_dir to service;
+-- test: exec dev_pkg_utl_csv.insert2table_from_file( 'test.txt', 'CSV_UTIL_LOAD_DIR',  'no such table' );
+  v_fh UTL_FILE.FILE_TYPE;
+  v_buf  VARCHAR2(32767 CHAR);
+
+BEGIN
+	loginfo( gc_pkg_name||'.'||$$plsql_line, 'file:'||p_file||' p_directory:'||p_directory );
+  v_fh:= UTL_FILE.FOPEN( p_directory, p_file, 'R');
+  UTL_FILE.GET_LINE(v_fh, v_buf);
+  UTL_FILE.FCLOSE( v_fh );
+  dbms_output.put_line(v_buf);
+END insert2table_from_file;
+
 end; -- package 
 /
 
