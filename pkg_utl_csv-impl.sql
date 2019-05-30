@@ -1,10 +1,11 @@
-CREATE OR REPLACE PACKAGE BODY Pkg_utl_csv 
+CREATE OR REPLACE PACKAGE BODY dev_Pkg_utl_csv 
 as
 /* **************************************************************************
 * $HeadUrl: $
 * $Id: pkg_utl_csv-impl.sql 65 2015-05-28 11:57:09Z Lam.Bon-Minh $ 
 ***************************************************************/ 
-   gc_pkg_name constant varchar2(30) := 'Pkg_utl_csv';
+   
+   gc_pkg_name constant varchar2(30) := $$plsql_unit;
    gc_nl        CONSTANT VARCHAR2 (10)      := CHR (10); 
    gc_dos_eol        CONSTANT VARCHAR2 (10)      := CHR (13) || CHR (10);   -- DOS style End Of Line
    gc_unix_eol       CONSTANT VARCHAR2 (10)      := CHR (10);   -- Unix style End Of Line
@@ -15,18 +16,19 @@ as
   type t_column_dtype_map is table of all_tab_columns.data_type%type index by varchar2(30);
   type t_column_dtype_tab is table of all_tab_columns.data_type%type ;
    
-   procedure loginfo ( p1  varchar2, p2 varchar2) as
-   begin null;
-   end loginfo;
-   
-   procedure logerror ( p1  varchar2, p_err_code integer, p3 varchar2) as
-   begin null;
-   end logerror;
-   
-   procedure debug ( p1  varchar2, p2 varchar2) as
-   begin dbms_output.put_line(p2);
-   end debug;
-   
+   $IF $$logging_tool_available = 0 $THEN 
+	   procedure loginfo ( p1  varchar2, p2 varchar2) as
+	   begin null;
+	   end loginfo;
+	   
+	   procedure logerror ( p1  varchar2, p_err_code integer, p3 varchar2) as
+	   begin null;
+	   end logerror;
+	   
+	   procedure debug ( p1  varchar2, p2 varchar2) as
+	   begin dbms_output.put_line(p2);
+	   end debug;
+   $END 
       /**************************************************************/
    FUNCTION get_column_dtype_map (
       ptab_column                              dbms_sql.varchar2a
@@ -230,7 +232,7 @@ BEGIN
 		-- finalize column list
 		l_create_tab_stmt := l_create_tab_stmt||')';
 		begin
-			--pck_std_log.info_long(gc_pkg_name, lc_procname, 'creating target table with stmt: '||l_create_tab_stmt );
+			pck_std_log.info_long(gc_pkg_name, $$plsql_line, 'creating target table with stmt: '||l_create_tab_stmt );
 			execute immediate l_create_tab_stmt;
 --		exception
 --			when others then
@@ -369,7 +371,11 @@ BEGIN
 	||l_nls_sess_date_format
 	||''''
 	;
-
+EXCEPTION
+   WHEN OTHERS THEN
+	logerror(lc_cntxt, sqlcode, dbms_utility.format_error_backtrace );
+      ROLLBACK;
+      raise;
 END insert2table;
 
 FUNCTION gen_update_for_unquoting( 
@@ -486,6 +492,7 @@ PROCEDURE insert2table_from_file (
  , p_create_table boolean default false
  , p_create_column_length integer default 100
  , p_standalone_head_line varchar2 default null
+ , p_max_records_expected NUMBER default 10000
 )
 --
 AS
@@ -494,15 +501,42 @@ AS
 --create directory csv_util_load_dir as '/oradata/csv_util_load';
 --grant read on directory csv_util_load_dir to service;
 -- test: exec dev_pkg_utl_csv.insert2table_from_file( 'test.txt', 'CSV_UTIL_LOAD_DIR',  'no such table' );
+
+  lc_cntxt CONSTANT VARCHAR2(100 CHAR) := gc_pkg_name||'.insert2table_from_file';
+  lc_32k_minus_1 CONSTANT INTEGER := 32767;
   v_fh UTL_FILE.FILE_TYPE;
   v_buf  VARCHAR2(32767 CHAR);
+  v_ln_cnt NUMBER := 0;
+  v_countdown NUMBER := COALESCE( p_max_records_expected, 10000 );
 
 BEGIN
 	loginfo( gc_pkg_name||'.'||$$plsql_line, 'file:'||p_file||' p_directory:'||p_directory );
-  v_fh:= UTL_FILE.FOPEN( p_directory, p_file, 'R');
-  UTL_FILE.GET_LINE(v_fh, v_buf);
+  v_fh:= UTL_FILE.FOPEN( location=>p_directory, filename=> p_file, open_mode=> 'R', max_linesize => lc_32k_minus_1
+    );
+  WHILE v_countdown >= 0 
+  LOOP 
+    BEGIN 
+      UTL_FILE.GET_LINE(v_fh, v_buf);
+      v_ln_cnt := v_ln_cnt + 1;
+      loginfo( lc_cntxt, 'input line '||v_ln_cnt||' len:'|| lengthc( v_buf)||' start with: '||substrc( v_buf, 1, 20) );
+    EXCEPTION
+      WHEN no_data_found THEN 
+        loginfo( lc_cntxt, 'No more lines found after '||v_ln_cnt||' records');
+        v_countdown := 0; 
+    END;
+    v_countdown := v_countdown - 1;
+    --dbms_output.put_line(v_buf);
+  END LOOP; -- over lines 
   UTL_FILE.FCLOSE( v_fh );
-  dbms_output.put_line(v_buf);
+  loginfo( lc_cntxt, 'Lines found '||v_ln_cnt );
+EXCEPTION  
+  WHEN OTHERS THEN 
+    logerror(lc_cntxt, sqlcode, dbms_utility.format_error_backtrace);
+    IF utl_file.is_open( v_fh ) THEN 
+      utl_file.fclose( v_fh );
+    END IF;
+    raise;
+    
 END insert2table_from_file;
 
 end; -- package 
