@@ -27,7 +27,12 @@ as
 , p_create_column_length VARCHAR2
 )
   ; 
- 
+PROCEDURE gp_compose_insert_stmt -- forward declaration
+( p_target_schema VARCHAR2
+, p_table_name  VARCHAR2
+, ptab_col_name dbms_sql.varchar2a
+, po_sql_text OUT VARCHAR2
+);
    $IF $$logging_tool_available = 0 $THEN 
 	   procedure loginfo ( p1  varchar2, p2 varchar2) as
 	   begin null;
@@ -239,28 +244,12 @@ BEGIN
    end if; -- p_create_table
    
    -- set up dynamic insert2table statement
-   l_insert2table_stmt :=
-          'insert into ' || CASE
-             WHEN p_target_schema IS NOT NULL THEN p_target_schema || '.'
-          END || p_target_object || '(';
-
-   FOR i IN 1 .. ltab_col_nam.COUNT LOOP
-      l_insert2table_stmt := l_insert2table_stmt || CASE
-                          WHEN i > 1 THEN ','
-                       END || quote_str(ltab_col_nam (i));
-   END LOOP;   -- over column names
-
-   l_insert2table_stmt := l_insert2table_stmt || ') values (';
-
-   FOR i IN 1 .. ltab_col_nam.COUNT LOOP
-      l_insert2table_stmt := l_insert2table_stmt || CASE
-                          WHEN i > 1 THEN ', '
-                       END || ':B' || TO_CHAR (i);
-   END LOOP;   -- over declaration of bind variables
-
-   l_insert2table_stmt := l_insert2table_stmt || ')';
-
-   BEGIN
+   gp_compose_insert_stmt( p_target_schema => p_target_schema
+    , p_table_name  => p_target_object
+    , ptab_col_name => ltab_col_nam
+    , po_sql_text => l_insert2table_stmt
+    );
+    BEGIN
       DBMS_SQL.parse (l_cur, l_insert2table_stmt, DBMS_SQL.native);
    EXCEPTION
       WHEN OTHERS THEN
@@ -536,16 +525,23 @@ BEGIN
       end if; -- check p_standalone_head_line
       loginfo (c_cntxt, 'Col count: ' || vtab_col_nam.COUNT);
 
-     /* Create target table if applicable
-     */
-    if p_create_table then
-      gp_create_target_table( p_target_schema=> p_target_schema, p_table_name => p_target_object
-        , ptab_col_name => vtab_col_nam
-        , p_create_column_length=> p_create_column_length
+       /* Create target table if applicable
+       */
+      if p_create_table then
+        gp_create_target_table( p_target_schema=> p_target_schema, p_table_name => p_target_object
+          , ptab_col_name => vtab_col_nam
+          , p_create_column_length=> p_create_column_length
+        );
+      end if; -- p_create_table
+      
+      gp_compose_insert_stmt( p_target_schema => p_target_schema
+      , p_table_name  => p_target_object
+      , ptab_col_name => vtab_col_nam
+      , po_sql_text => v_insert2table_stmt
       );
-     end if; -- p_create_table
-     gp_set_num_chars_with_backup( p_new_decimal_point=> p_decimal_point_char, po_old_value => v_nls_sess_num_chars );
-   
+
+      gp_set_num_chars_with_backup( p_new_decimal_point=> p_decimal_point_char, po_old_value => v_nls_sess_num_chars );
+     
     END IF; -- check column names are known
     v_countdown := v_countdown - 1;
     --dbms_output.put_line(v_buf);
@@ -607,6 +603,35 @@ BEGIN
 				raise;
 		end create_table;
 END gp_create_target_table; 
+
+PROCEDURE gp_compose_insert_stmt
+( p_target_schema VARCHAR2
+, p_table_name  VARCHAR2
+, ptab_col_name dbms_sql.varchar2a
+, po_sql_text OUT VARCHAR2
+) AS
+BEGIN
+   po_sql_text :=
+          'insert into ' || CASE
+             WHEN p_target_schema IS NOT NULL THEN p_target_schema || '.'
+          END || p_table_name|| '(';
+
+   FOR i IN 1 .. ptab_col_name.COUNT LOOP
+      po_sql_text := po_sql_text || CASE
+                          WHEN i > 1 THEN ','
+                       END || quote_str(ptab_col_name (i));
+   END LOOP;   -- over column names
+
+   po_sql_text := po_sql_text || ') values (';
+
+   FOR i IN 1 .. ptab_col_name.COUNT LOOP
+      po_sql_text := po_sql_text || CASE
+                          WHEN i > 1 THEN ', '
+                       END || ':B' || TO_CHAR (i);
+   END LOOP;   -- over declaration of bind variables
+
+   po_sql_text := po_sql_text || ')';
+END gp_compose_insert_stmt;
 
 end; -- package 
 /
