@@ -3,7 +3,7 @@ AUTHID CURRENT_USER
 as
 /* **************************************************************************
 * $HeadUrl: $
-* $Id: pkg_utl_csv-def.sql 65 2015-05-28 11:57:09Z Lam.Bon-Minh $ 
+* $Id: insert2table.sql 758 2010-09-29 15:20:20Z bmlam $ 
 * **************************************************************************/
 PROCEDURE insert2table (
    p_csv_string                   VARCHAR2
@@ -54,43 +54,6 @@ PROCEDURE insert2table (
    end;
 ***************************************************************/ 
 ;
-FUNCTION gen_update_for_unquoting( 
-   p_target_object       VARCHAR2
- , p_target_column       VARCHAR2
- , p_target_schema       VARCHAR2 DEFAULT user
-) RETURN VARCHAR2 
-;
-
-
-FUNCTION get_ext_table_ddl (
-   p_header_line varchar2 
- , p_target_object     VARCHAR2 DEFAULT NULL
- , p_file_name         VARCHAR2 DEFAULT NULL
- , p_ora_directory     VARCHAR2 DEFAULT NULL
- , p_col_sep varchar2 default ';' 
- , p_rec_sep varchar2 default CHR(10) 
- , p_create_column_length integer default 1000
-)
-RETURN VARCHAR2
-/* **************************************************************************
-* this function generates a DDL statemet for creating an external table.
-* It is useful when your CSV data is larger than 32K so that it cannot be passed as a literal
-* parameter. You can upload the data as CSV file if you can talk the DBA into cooperating. 
-* When the DBA grant your schema read write access to an Oracle directory and you have uploaded
-* run the CREATE TABLE statement. After that you just need to select the external table to view
-* or use the data.
-* 
-* Argument description
-*  p_target_object              The name of the external table
-*  p_ora_directory              
-*  p_file_name 
-*  p_col_sep varchar2 	  
-*  p_create_column_length if p_create_table is set, the uniform varchar2 length for all new columns
-*  p_header_line  the head line containing the column names of the CSV file
-* 
-/**************************************************************/
-;
-
 PROCEDURE insert2table_from_file (
    p_file                              VARCHAR2
  , p_directory                         VARCHAR2
@@ -103,10 +66,8 @@ PROCEDURE insert2table_from_file (
  , p_create_table boolean default false
  , p_create_column_length integer default 100
  , p_standalone_head_line varchar2 default null
- , p_max_records_expected NUMBER default 10000
 )
 ;
-
 END;
 /
 

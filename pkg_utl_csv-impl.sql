@@ -130,21 +130,24 @@ EXCEPTION
       AS
 	  lc_cntxt constant varchar2(61) := gc_pkg_name||'.get_column_dtype_map';
       ltab_return t_column_dtype_map;
-      l_column_dbx VARCHAR2(100);
-   begin
+      l_column VARCHAR2(100);
+  begin
+    debug( lc_cntxt, 'p_table:'||p_table );
     for i in 1 .. ptab_column.count loop
-       l_column_dbx := p_table||'.'||ptab_column(i);
+       l_column := ptab_column(i);
+       debug( lc_cntxt, 'l_column:'||l_column );
+
        select data_type into ltab_return( ptab_column (i) )
        from all_tab_columns
        where table_name = p_table
          and owner = p_schema
-         and column_name = ptab_column(i)
+         and column_name = l_column
          ;
     end loop; -- over ptab_column
     return ltab_return;
 EXCEPTION
    WHEN NO_DATA_FOUND THEN
-      RAISE_APPLICATION_ERROR( -20000, 'Could not determine data type for '||l_column_dbx );
+      RAISE_APPLICATION_ERROR( -20000, 'Could not determine data type for '||l_column );
    WHEN OTHERS THEN
 	logerror(lc_cntxt, sqlcode, dbms_utility.format_error_backtrace);
       raise;
@@ -250,7 +253,7 @@ BEGIN
    /* Create target table if applicable
    */
   if p_create_table then
-    gp_create_target_table( p_target_schema=> p_target_schema, p_table_name => p_target_object
+    gp_create_target_table( p_target_schema=> p_target_schema, p_table_name => upper(p_target_object)
       , ptab_col_name => ltab_col_nam
       , p_create_column_length=> p_create_column_length
     );
@@ -258,7 +261,7 @@ BEGIN
    
    -- set up dynamic insert2table statement
    gp_compose_insert_stmt( p_target_schema => p_target_schema
-    , p_table_name  => p_target_object
+    , p_table_name  => upper(p_target_object)
     , ptab_col_name => ltab_col_nam
     , po_sql_text => l_insert2table_stmt
     );
@@ -270,7 +273,7 @@ BEGIN
          RAISE;
    END parse_sql;
    lmap_column_dtype := get_column_dtype_map(p_schema=> p_target_schema,
-    p_table => p_target_object , ptab_column => ltab_col_nam
+    p_table => upper(p_target_object) , ptab_column => ltab_col_nam
     );
 
   gp_set_num_chars_with_backup( p_new_decimal_point=> p_decimal_point_char, po_old_value => l_nls_sess_num_chars );
@@ -279,7 +282,7 @@ BEGIN
   
    IF p_delete_before_insert2table THEN
 		l_sql := 'delete ' || CASE WHEN p_target_schema IS NOT NULL THEN p_target_schema || '.'
-                        END || p_target_object;
+                        END || upper(p_target_object);
 		loginfo(lc_cntxt, l_sql);
       EXECUTE IMMEDIATE l_sql;
    END IF;   -- check delete flag
@@ -455,6 +458,7 @@ AS
   c_32k_minus_1 CONSTANT INTEGER := 32767;
   v_fh UTL_FILE.FILE_TYPE;
   v_buf  VARCHAR2(32767 CHAR);
+  v_buf_converted  VARCHAR2(32767 CHAR);
   v_ln_cnt NUMBER := 0;
   v_countdown NUMBER := COALESCE( p_max_records_expected, 10000 );
 
@@ -467,7 +471,7 @@ AS
   v_delete_stmt long;
   v_prepared_cursor INTEGER;
   vmap_column_dtype t_column_dtype_map;
- 
+  v_do_conversion BOOLEAN;
 BEGIN
 	loginfo( gc_pkg_name||'.'||$$plsql_line, 'file:'||p_file||' p_directory:'||p_directory );
   v_fh:= UTL_FILE.FOPEN( location=>p_directory, filename=> p_file, open_mode=> 'R', max_linesize => c_32k_minus_1
@@ -479,7 +483,17 @@ BEGIN
     BEGIN 
       UTL_FILE.GET_LINE(v_fh, v_buf);
       v_ln_cnt := v_ln_cnt + 1;
-      loginfo( c_cntxt, 'input line '||v_ln_cnt||' len:'|| lengthc( v_buf)||' start with: '||substrc( v_buf, 1, 20) );
+      debug( c_cntxt, 'input line '||v_ln_cnt||' len:'|| lengthc( v_buf)||' start with: '||substrc( v_buf, 1, 20) );
+      IF v_do_conversion IS NULL AND v_ln_cnt <= 3 THEN
+        v_buf_converted := replace( v_buf, chr(0) );
+        IF length( v_buf ) > length( v_buf_converted ) THEN
+          v_do_conversion := TRUE;
+          loginfo( c_cntxt, 'Input data contains null bytes. will will always do conversion ');
+        END IF;
+      END IF;
+      IF v_do_conversion THEN 
+        v_buf := replace( v_buf, chr(0) );
+      END IF;
     EXCEPTION
       WHEN no_data_found THEN 
         loginfo( c_cntxt, 'No more lines found after '||v_ln_cnt||' records');
@@ -500,14 +514,14 @@ BEGIN
        /* Create target table if applicable
        */
       if p_create_table then
-        gp_create_target_table( p_target_schema=> p_target_schema, p_table_name => p_target_object
+        gp_create_target_table( p_target_schema=> p_target_schema, p_table_name => upper(p_target_object)
           , ptab_col_name => vtab_col_name
           , p_create_column_length=> p_create_column_length
         );
       end if; -- p_create_table
       
       gp_compose_insert_stmt( p_target_schema => p_target_schema
-      , p_table_name  => p_target_object
+      , p_table_name  => upper(p_target_object)
       , ptab_col_name => vtab_col_name
       , po_sql_text => v_insert2table_stmt
       );
@@ -521,7 +535,7 @@ BEGIN
            RAISE;
       END parse_sql;
         vmap_column_dtype := get_column_dtype_map(p_schema=> p_target_schema,
-          p_table => p_target_object , ptab_column => vtab_col_name
+          p_table => upper(p_target_object) , ptab_column => vtab_col_name
         );
 
       gp_set_num_chars_with_backup( p_new_decimal_point=> p_decimal_point_char, po_old_value => v_nls_sess_num_chars );
@@ -529,7 +543,7 @@ BEGIN
       
       IF p_delete_before_insert2table THEN
         v_delete_stmt := 'delete ' || CASE WHEN p_target_schema IS NOT NULL THEN p_target_schema || '.'
-                            END || p_target_object;
+                            END || upper(p_target_object);
         loginfo(c_cntxt, v_delete_stmt);
         EXECUTE IMMEDIATE v_delete_stmt;
       END IF;   -- check delete flag
