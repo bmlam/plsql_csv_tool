@@ -16,11 +16,18 @@ as
   type t_column_dtype_map is table of all_tab_columns.data_type%type index by varchar2(30);
   type t_column_dtype_tab is table of all_tab_columns.data_type%type ;
    
- PROCEDURE gp_set_num_chars_with_backup
+ PROCEDURE gp_set_num_chars_with_backup -- forward declaration
   (  p_new_decimal_point VARCHAR2
-   , po_old_value OUT VARCHAR2 ) -- forward declaration
+   , po_old_value OUT VARCHAR2 ) 
   ;
-  
+ PROCEDURE gp_create_target_table -- forward declaration
+( p_target_schema VARCHAR2
+, p_table_name  VARCHAR2
+, ptab_col_name dbms_sql.varchar2a
+, p_create_column_length VARCHAR2
+)
+  ; 
+ 
    $IF $$logging_tool_available = 0 $THEN 
 	   procedure loginfo ( p1  varchar2, p2 varchar2) as
 	   begin null;
@@ -158,7 +165,7 @@ AS
    l_nls_sess_date_format varchar2(100);
    l_num_bind number;
    l_sql long;
-   l_create_tab_stmt long;
+
    /**************************************************************/
    procedure i$reset_line_cur
    /**************************************************************/
@@ -224,27 +231,13 @@ BEGIN
    
    /* Create target table if applicable
    */
-   if p_create_table then
-		for i in 1 .. ltab_col_nam.count loop
-			l_create_tab_stmt := 
-			case
-				when i = 1 then 'create table '||p_target_schema||'.'||p_target_object||'('
-				else l_create_tab_stmt||','
-			end ||gc_nl
-			||quote_str( ltab_col_nam(i) )||' varchar2('||p_create_column_length||')'
-			;
-		end loop; -- over column names
-		-- finalize column list
-		l_create_tab_stmt := l_create_tab_stmt||')';
-		begin
-			pck_std_log.info_long(gc_pkg_name, $$plsql_line, 'creating target table with stmt: '||l_create_tab_stmt );
-			execute immediate l_create_tab_stmt;
---		exception
---			when others then
---				loginfo(lc_cntxt, 'DDL stmt was: '|| l_create_tab_stmt);
---				raise;
-		end create_table;
+  if p_create_table then
+    gp_create_target_table( p_target_schema=> p_target_schema, p_table_name => p_target_object
+      , ptab_col_name => ltab_col_nam
+      , p_create_column_length=> p_create_column_length
+    );
    end if; -- p_create_table
+   
    -- set up dynamic insert2table statement
    l_insert2table_stmt :=
           'insert into ' || CASE
@@ -507,18 +500,19 @@ AS
 
   vtab_col_nam               DBMS_SQL.varchar2a;
   vtab_col_val               DBMS_SQL.varchar2a;
-   v_insert2table_stmt              LONG;
-   v_cur                      INTEGER            := DBMS_SQL.open_cursor;
-   v_stat                     INTEGER;
-   v_nls_sess_num_chars varchar2(100);
-   v_nls_sess_date_format varchar2(100);
-   v_num_bind number;
-   v_sql long;
+  v_insert2table_stmt              LONG;
+  v_cur                      INTEGER            := DBMS_SQL.open_cursor;
+  v_stat                     INTEGER;
+  v_nls_sess_num_chars varchar2(100);
+  v_nls_sess_date_format varchar2(100);
+  v_num_bind number;
+  v_sql long;
  
 BEGIN
 	loginfo( gc_pkg_name||'.'||$$plsql_line, 'file:'||p_file||' p_directory:'||p_directory );
   v_fh:= UTL_FILE.FOPEN( location=>p_directory, filename=> p_file, open_mode=> 'R', max_linesize => c_32k_minus_1
     );
+  
   WHILE v_countdown >= 0 
   LOOP 
     BEGIN 
@@ -541,6 +535,17 @@ BEGIN
         vtab_col_nam := get_all_columns (p_standalone_head_line);
       end if; -- check p_standalone_head_line
       loginfo (c_cntxt, 'Col count: ' || vtab_col_nam.COUNT);
+
+     /* Create target table if applicable
+     */
+    if p_create_table then
+      gp_create_target_table( p_target_schema=> p_target_schema, p_table_name => p_target_object
+        , ptab_col_name => vtab_col_nam
+        , p_create_column_length=> p_create_column_length
+      );
+     end if; -- p_create_table
+     gp_set_num_chars_with_backup( p_new_decimal_point=> p_decimal_point_char, po_old_value => v_nls_sess_num_chars );
+   
     END IF; -- check column names are known
     v_countdown := v_countdown - 1;
     --dbms_output.put_line(v_buf);
@@ -573,6 +578,35 @@ BEGIN
     ||''''
     ;
 END gp_set_num_chars_with_backup;
+
+PROCEDURE gp_create_target_table
+( p_target_schema VARCHAR2
+, p_table_name  VARCHAR2
+, ptab_col_name dbms_sql.varchar2a
+, p_create_column_length VARCHAR2
+) AS
+   l_create_tab_stmt long;
+BEGIN
+		for i in 1 .. ptab_col_name.count loop
+			l_create_tab_stmt := 
+			case
+				when i = 1 then 'create table '||p_target_schema||'.'||p_table_name||'('
+				else l_create_tab_stmt||','
+			end ||gc_nl
+			||quote_str( ptab_col_name(i) )||' varchar2('||p_create_column_length||')'
+			;
+		end loop; -- over column names
+		-- finalize column list
+		l_create_tab_stmt := l_create_tab_stmt||')';
+		begin
+			pck_std_log.info_long(gc_pkg_name, $$plsql_line, 'creating target table with stmt: '||l_create_tab_stmt );
+			execute immediate l_create_tab_stmt;
+		exception
+			when others then
+				loginfo($$plsql_unit||':'||$$plq_line, 'DDL stmt was: '|| l_create_tab_stmt);
+				raise;
+		end create_table;
+END gp_create_target_table; 
 
 end; -- package 
 /
