@@ -33,6 +33,11 @@ PROCEDURE gp_compose_insert_stmt -- forward declaration
 , ptab_col_name dbms_sql.varchar2a
 , po_sql_text OUT VARCHAR2
 );
+PROCEDURE gp_set_date_format_with_backup-- forward declaration
+( p_new_value VARCHAR2
+  ,po_old_value OUT VARCHAR2
+);
+
    $IF $$logging_tool_available = 0 $THEN 
 	   procedure loginfo ( p1  varchar2, p2 varchar2) as
 	   begin null;
@@ -253,7 +258,7 @@ BEGIN
       DBMS_SQL.parse (l_cur, l_insert2table_stmt, DBMS_SQL.native);
    EXCEPTION
       WHEN OTHERS THEN
-         loginfo (lc_cntxt, SUBSTR ('Error on parse: ' || l_insert2table_stmt, 1, 255));
+         loginfo (lc_cntxt, SUBSTR ('Error on parse: ' || l_insert2table_stmt, 1, 500));
          RAISE;
    END parse_sql;
    lmap_column_dtype := get_column_dtype_map(p_schema=> p_target_schema,
@@ -261,16 +266,9 @@ BEGIN
     );
 
   gp_set_num_chars_with_backup( p_new_decimal_point=> p_decimal_point_char, po_old_value => l_nls_sess_num_chars );
-  
-	select value into l_nls_sess_date_format
-	from nls_session_parameters
-	where parameter = 'NLS_DATE_FORMAT'
-	;
-   execute immediate 'alter session set NLS_DATE_FORMAT = '''
-	||p_date_format
-	||''''
-	;
+  gp_set_date_format_with_backup( p_new_value => p_date_format, po_old_value=> l_nls_sess_date_format );
 
+  
    IF p_delete_before_insert2table THEN
 		l_sql := 'delete ' || CASE WHEN p_target_schema IS NOT NULL THEN p_target_schema || '.'
                         END || p_target_object;
@@ -541,7 +539,8 @@ BEGIN
       );
 
       gp_set_num_chars_with_backup( p_new_decimal_point=> p_decimal_point_char, po_old_value => v_nls_sess_num_chars );
-     
+      gp_set_date_format_with_backup( p_new_value=> p_date_format, po_old_value=> v_nls_sess_date_format );
+      
     END IF; -- check column names are known
     v_countdown := v_countdown - 1;
     --dbms_output.put_line(v_buf);
@@ -632,6 +631,22 @@ BEGIN
 
    po_sql_text := po_sql_text || ')';
 END gp_compose_insert_stmt;
+
+
+PROCEDURE gp_set_date_format_with_backup
+( p_new_value VARCHAR2
+  ,po_old_value OUT VARCHAR2
+) AS
+BEGIN
+	select value into po_old_value
+	from nls_session_parameters
+	where parameter = 'NLS_DATE_FORMAT'
+	;
+   execute immediate 'alter session set NLS_DATE_FORMAT = '''
+	||p_new_value
+	||''''
+	;
+END gp_set_date_format_with_backup;
 
 end; -- package 
 /
