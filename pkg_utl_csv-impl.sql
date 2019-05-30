@@ -38,6 +38,14 @@ PROCEDURE gp_set_date_format_with_backup-- forward declaration
   ,po_old_value OUT VARCHAR2
 );
 
+PROCEDURE gp_insert_row -- forward declaration
+( p_prepared_cursor INTEGER
+ ,p_decimal_point_char VARCHAR2
+ ,ptab_col_name  dbms_sql.varchar2a
+ ,ptab_col_val  dbms_sql.varchar2a
+ ,pmap_col_data_type t_column_dtype_map
+ ,p_line_no_dbx INTEGER 
+) ;
    $IF $$logging_tool_available = 0 $THEN 
 	   procedure loginfo ( p1  varchar2, p2 varchar2) as
 	   begin null;
@@ -286,51 +294,16 @@ BEGIN
       l_line_no := l_line_no + 1;
 
       debug (lc_cntxt, 'line ' || l_line_no || ' starts with: ' || SUBSTR (l_line, 1, 30));
+ 
       IF l_line IS NOT NULL THEN
-         ltab_col_val := get_all_columns (l_line);
-
-         -- bind column values that are specified in the CSV line (it can be null!)
-         FOR i IN 1 .. ltab_col_val.COUNT LOOP
-            EXIT WHEN i > ltab_col_nam.COUNT;
-
-            BEGIN
-               DBMS_OUTPUT.put_line (SUBSTR ('co1 value: ' || ltab_col_val (i), 1, 255) );
-               DBMS_SQL.bind_variable (c =>          l_cur, NAME => ':B' || TO_CHAR (i), VALUE => 
-                -- for numeric columns, we need to eliminate numeric group separators
-                case when lmap_column_dtype( ltab_col_nam(i) ) = 'NUMBER' 
-                THEN replace( ltab_col_val (i)
-                  , case when p_decimal_point_char=',' then '.' 
-                  else ',' end -- specifiy group separator that might occur based on decimal point 
-                  ) -- end replace 
-                else
-                  ltab_col_val (i)
-                end -- check data type 
-               );
-            EXCEPTION
-               WHEN OTHERS THEN
-                  raise_application_error(-20000, 'Error on bind: Line=' || l_line_no || ' column index ' || TO_CHAR (i)
-                                             );
-            END bind_column_value;
-         END LOOP;   -- over declaration of bind variables
-
-         -- bind column values that are not specified in the CSV line because it contains less items
-         -- than the column count
-         FOR i IN ltab_col_val.COUNT + 1 .. ltab_col_nam.COUNT LOOP
-            BEGIN
-               DBMS_SQL.bind_variable (c =>          l_cur, NAME => ':B' || TO_CHAR (i), VALUE => TO_char (NULL));
-            EXCEPTION
-               WHEN OTHERS THEN
-                  raise_application_error(-200000, 'Error on bind: Line=' || l_line_no || ' column index ' || TO_CHAR (i)  );
-            END bind_null_value;
-         END LOOP;   -- over declaration of bind variables
-		begin
-			l_stat := DBMS_SQL.EXECUTE (l_cur);
-			l_ins_cnt := l_ins_cnt + 1;
-        EXCEPTION
-               WHEN OTHERS THEN
-                  raise_application_error(-20000, 'Line=' || l_line_no ||': '||sqlerrm);
-                  RAISE;
-        END exec_insert2table_stmt;
+        ltab_col_val := get_all_columns (l_line);
+        gp_insert_row ( p_prepared_cursor => l_cur
+         ,p_decimal_point_char => p_decimal_point_char
+         ,ptab_col_name  => ltab_col_nam         ,ptab_col_val  => ltab_col_val
+         ,pmap_col_data_type => lmap_column_dtype, p_line_no_dbx => l_line_no
+         ) ;
+                 
+       l_ins_cnt := l_ins_cnt + 1;
       END IF;   -- line not empty
 
    END LOOP;   -- over CSV string
@@ -485,20 +458,21 @@ AS
   v_ln_cnt NUMBER := 0;
   v_countdown NUMBER := COALESCE( p_max_records_expected, 10000 );
 
-  vtab_col_nam               DBMS_SQL.varchar2a;
+  vtab_col_name              DBMS_SQL.varchar2a;
   vtab_col_val               DBMS_SQL.varchar2a;
   v_insert2table_stmt              LONG;
-  v_cur                      INTEGER            := DBMS_SQL.open_cursor;
-  v_stat                     INTEGER;
   v_nls_sess_num_chars varchar2(100);
   v_nls_sess_date_format varchar2(100);
   v_num_bind number;
-  v_sql long;
+  v_delete_stmt long;
+  v_prepared_cursor INTEGER;
+  vmap_column_dtype t_column_dtype_map;
  
 BEGIN
 	loginfo( gc_pkg_name||'.'||$$plsql_line, 'file:'||p_file||' p_directory:'||p_directory );
   v_fh:= UTL_FILE.FOPEN( location=>p_directory, filename=> p_file, open_mode=> 'R', max_linesize => c_32k_minus_1
     );
+  g_col_sep  := p_col_sep;   
   
   WHILE v_countdown >= 0 
   LOOP 
@@ -512,41 +486,82 @@ BEGIN
         v_countdown := 0; 
     END;
 
-    IF vtab_col_nam.COUNT = 0 THEN 
+    IF vtab_col_name.COUNT = 0 THEN 
       if p_standalone_head_line is null then
         if length(v_buf) = 1 or v_buf is null  then
           raise_application_error(-20000, 'the first line of the CSV text appears to be empty!');
         end if; -- header line empty
-        vtab_col_nam := get_all_columns (v_buf);
+        vtab_col_name := get_all_columns (v_buf);
       else
-        vtab_col_nam := get_all_columns (p_standalone_head_line);
+        vtab_col_name := get_all_columns (p_standalone_head_line);
       end if; -- check p_standalone_head_line
-      loginfo (c_cntxt, 'Col count: ' || vtab_col_nam.COUNT);
+      loginfo (c_cntxt, 'Col count: ' || vtab_col_name.COUNT);
 
        /* Create target table if applicable
        */
       if p_create_table then
         gp_create_target_table( p_target_schema=> p_target_schema, p_table_name => p_target_object
-          , ptab_col_name => vtab_col_nam
+          , ptab_col_name => vtab_col_name
           , p_create_column_length=> p_create_column_length
         );
       end if; -- p_create_table
       
       gp_compose_insert_stmt( p_target_schema => p_target_schema
       , p_table_name  => p_target_object
-      , ptab_col_name => vtab_col_nam
+      , ptab_col_name => vtab_col_name
       , po_sql_text => v_insert2table_stmt
       );
+      
+      BEGIN
+        v_prepared_cursor := dbms_sql.open_cursor;
+        DBMS_SQL.parse (v_prepared_cursor, v_insert2table_stmt, DBMS_SQL.native);
+      EXCEPTION
+        WHEN OTHERS THEN
+           loginfo ( c_cntxt, SUBSTR ('Error on parse: ' || v_insert2table_stmt, 1, 500));
+           RAISE;
+      END parse_sql;
+        vmap_column_dtype := get_column_dtype_map(p_schema=> p_target_schema,
+          p_table => p_target_object , ptab_column => vtab_col_name
+        );
 
       gp_set_num_chars_with_backup( p_new_decimal_point=> p_decimal_point_char, po_old_value => v_nls_sess_num_chars );
       gp_set_date_format_with_backup( p_new_value=> p_date_format, po_old_value=> v_nls_sess_date_format );
       
+      IF p_delete_before_insert2table THEN
+        v_delete_stmt := 'delete ' || CASE WHEN p_target_schema IS NOT NULL THEN p_target_schema || '.'
+                            END || p_target_object;
+        loginfo(c_cntxt, v_delete_stmt);
+        EXECUTE IMMEDIATE v_delete_stmt;
+      END IF;   -- check delete flag
+
+    ELSE -- cursor init stuff should have been done
+       
+      IF v_buf IS NOT NULL THEN
+          vtab_col_val := get_all_columns (v_buf);
+          gp_insert_row ( p_prepared_cursor => v_prepared_cursor
+           ,p_decimal_point_char => p_decimal_point_char
+           ,ptab_col_name  => vtab_col_name         ,ptab_col_val  => vtab_col_val
+           ,pmap_col_data_type => vmap_column_dtype, p_line_no_dbx => v_ln_cnt
+           ) ;
+      END IF; -- 
     END IF; -- check column names are known
     v_countdown := v_countdown - 1;
     --dbms_output.put_line(v_buf);
   END LOOP; -- over lines 
   UTL_FILE.FCLOSE( v_fh );
   loginfo( c_cntxt, 'Lines found '||v_ln_cnt );
+  
+   /* restore nls setting 
+   */
+   execute immediate 'alter session set NLS_NUMERIC_CHARACTERS = '''
+	||v_nls_sess_num_chars
+	||''''
+	;
+   execute immediate 'alter session set NLS_DATE_FORMAT = '''
+	||v_nls_sess_date_format
+	||''''
+	;
+
 EXCEPTION  
   WHEN OTHERS THEN 
     logerror(c_cntxt, sqlcode, dbms_utility.format_error_backtrace);
@@ -648,6 +663,60 @@ BEGIN
 	;
 END gp_set_date_format_with_backup;
 
+      
+PROCEDURE gp_insert_row 
+( p_prepared_cursor INTEGER
+ ,p_decimal_point_char VARCHAR2
+ ,ptab_col_name  dbms_sql.varchar2a
+ ,ptab_col_val  dbms_sql.varchar2a
+ ,pmap_col_data_type t_column_dtype_map
+ ,p_line_no_dbx INTEGER 
+) AS
+  l_exec_status NUMBER;
+BEGIN
+         -- bind column values that are specified in the CSV line (it can be null!)
+         FOR i IN 1 .. ptab_col_val.COUNT LOOP
+            EXIT WHEN i > ptab_col_name.COUNT;
+
+            BEGIN
+               debug ($$plsql_line||':'||$$plsql_ine, SUBSTR ('co1 value: ' || ptab_col_val (i), 1, 255) );
+               DBMS_SQL.bind_variable (c =>          p_prepared_cursor, NAME => ':B' || TO_CHAR (i), VALUE => 
+                -- for numeric columns, we need to eliminate numeric group separators
+                case when pmap_col_data_type( ptab_col_name(i) ) = 'NUMBER' 
+                THEN replace( ptab_col_val (i)
+                  , case when p_decimal_point_char=',' then '.' 
+                  else ',' end -- specifiy group separator that might occur based on decimal point 
+                  ) -- end replace 
+                else
+                  ptab_col_val (i)
+                end -- check data type 
+               );
+            EXCEPTION
+               WHEN OTHERS THEN
+                  raise_application_error(-20000, 'Error on bind: Line=' || p_line_no_dbx || ' column index ' || TO_CHAR (i)
+                                             );
+            END bind_column_value;
+         END LOOP;   -- over declaration of bind variables
+
+         -- bind column values that are not specified in the CSV line because it contains less items
+         -- than the column count
+         FOR i IN ptab_col_val.COUNT + 1 .. ptab_col_name.COUNT LOOP
+            BEGIN
+               DBMS_SQL.bind_variable (c =>          p_prepared_cursor, NAME => ':B' || TO_CHAR (i), VALUE => TO_char (NULL));
+            EXCEPTION
+               WHEN OTHERS THEN
+                  raise_application_error(-200000, 'Error on bind: Line=' || p_line_no_dbx || ' column index ' || TO_CHAR (i)  );
+            END bind_null_value;
+         END LOOP;   -- over declaration of bind variables
+		begin
+			l_exec_status := DBMS_SQL.EXECUTE (p_prepared_cursor);
+        EXCEPTION
+               WHEN OTHERS THEN
+                  raise_application_error(-20000, 'Line=' || p_line_no_dbx ||': '||sqlerrm);
+                  RAISE;
+        END exec_insert2table_stmt;
+ END gp_insert_row;
+ 
 end; -- package 
 /
 
