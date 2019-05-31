@@ -1,6 +1,10 @@
 # plsql_csv_tool
 A tool written in PLSQL for converting data in csv file into database tables. The database table can be created on the fly
-because the first line/record must contain the column names. The csv data is passed as varchar2 parameter, hence the 32k size limit applies
+when you tell the procedure that the first line/record contains the column names. The csv data is passed as varchar2 parameter, hence the 32k size limit applies.
+
+For data which exists the 32k limit, and if you have the permissions to upload the data as file to the database server, have a look at procedure INSERT2TABLE_FROM_FILE.
+
+Another reason to to go via file: when the data is not ASCII, but for example UTF encoded in one of many flavors, null bytes are contained in the data. SQL Developer and possible other Oracle client tools have troubkle handling with that. INSERT2TABLE_FROM_FILE contains code to strip off these null bytes. 
 
 To install and use, you need an Oracle database account with CREATE TABLE and PROCEDURE privileges and tablespace quota for your data. The installed code comprises of a single PLSQL package. It has been tested with SQLPLUS. To install type in the following line after login:
 

@@ -54,6 +54,7 @@ PROCEDURE insert2table (
    end;
 ***************************************************************/ 
 ;
+
 PROCEDURE insert2table_from_file (
    p_file                              VARCHAR2
  , p_directory                         VARCHAR2
@@ -66,6 +67,7 @@ PROCEDURE insert2table_from_file (
  , p_create_table boolean default false
  , p_create_column_length integer default 100
  , p_standalone_head_line varchar2 default null
+ , p_max_records_expected NUMBER default 10000
 )
 ;
 END;
