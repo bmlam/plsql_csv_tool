@@ -1,4 +1,4 @@
-CREATE OR REPLACE PACKAGE BODY dev_Pkg_utl_csv 
+CREATE OR REPLACE PACKAGE BODY Pkg_utl_csv 
 as
 /* **************************************************************************
 * $HeadUrl: $
@@ -452,7 +452,7 @@ AS
 -- Setup to  be done by DBA: 
 --create directory csv_util_load_dir as '/oradata/csv_util_load';
 --grant read on directory csv_util_load_dir to service;
--- test: exec dev_pkg_utl_csv.insert2table_from_file( 'test.txt', 'CSV_UTIL_LOAD_DIR',  'no such table' );
+-- test: exec Pkg_utl_csv.insert2table_from_file( 'test.txt', 'CSV_UTIL_LOAD_DIR',  'no such table' );
 
   c_cntxt CONSTANT VARCHAR2(100 CHAR) := gc_pkg_name||'.insert2table_from_file';
   c_32k_minus_1 CONSTANT INTEGER := 32767;
