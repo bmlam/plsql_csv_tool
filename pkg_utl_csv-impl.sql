@@ -46,19 +46,7 @@ PROCEDURE gp_insert_row -- forward declaration
  ,pmap_col_data_type t_column_dtype_map
  ,p_line_no_dbx INTEGER 
 ) ;
-   $IF $$logging_tool_available = 0 $THEN 
-	   procedure loginfo ( p1  varchar2, p2 varchar2) as
-	   begin null;
-	   end loginfo;
-	   
-	   procedure logerror ( p1  varchar2, p_err_code integer, p3 varchar2) as
-	   begin null;
-	   end logerror;
-	   
-	   procedure debug ( p1  varchar2, p2 varchar2) as
-	   begin dbms_output.put_line(p2);
-	   end debug;
-   $END 
+ 
       /**************************************************************/
    FUNCTION get_column_dtype_map (
       ptab_column                              dbms_sql.varchar2a
@@ -94,28 +82,28 @@ PROCEDURE gp_insert_row -- forward declaration
       ltab_column   DBMS_SQL.varchar2a;
       lc_col_sep_len CONSTANT INTEGER := LENGTH( g_col_sep );
    BEGIN
-      debug(lc_cntxt,'l_line_len: '||l_line_len||' First 10 chars: '||substr(p_line, 1,10) );
+      pck_std_log.dbx('l_line_len: '||l_line_len||' First 10 chars: '||substr(p_line, 1,10) );
       WHILE l_scan_pos < l_line_len LOOP
          l_sep_pos := INSTR (p_line, g_col_sep, l_scan_pos);
-         debug(lc_cntxt, 'line:'||$$plsql_line||' l_scan_pos: '||to_char(l_scan_pos) ||' l_sep_pos: '||to_char(l_sep_pos) );
+         pck_std_log.dbx( 'line:'||$$plsql_line||' l_scan_pos: '||to_char(l_scan_pos) ||' l_sep_pos: '||to_char(l_sep_pos) );
          l_column :=
             CASE
                WHEN l_sep_pos > 0 THEN substr/*c*/ (p_line, l_scan_pos, l_sep_pos - l_scan_pos)
                ELSE substr/*c*/ (p_line, l_scan_pos)
             END;
          ltab_column (ltab_column.COUNT + 1) := l_column;
-         debug(lc_cntxt, 'line:'||$$plsql_line||' l_column=' || substr(l_column, 1, 30)||case when length(l_column) > 30 then '..' end  );
+         pck_std_log.dbx( 'line:'||$$plsql_line||' l_column=' || substr(l_column, 1, 30)||case when length(l_column) > 30 then '..' end  );
          l_scan_pos := l_scan_pos + 
             case when l_column is not null then length/*c*/ (l_column) else 0 end
             + lc_col_sep_len;
-         debug(lc_cntxt, 'line:'||$$plsql_line||' l_scan_pos: '||l_scan_pos);
+         pck_std_log.dbx( 'line:'||$$plsql_line||' l_scan_pos: '||l_scan_pos);
       END LOOP;
-		debug(lc_cntxt, 'returning ltab_column.count: '||ltab_column.count);
+		pck_std_log.dbx( 'returning ltab_column.count: '||ltab_column.count);
 
       RETURN ltab_column;
 EXCEPTION
    WHEN OTHERS THEN
-	logerror(lc_cntxt, sqlcode, dbms_utility.format_error_backtrace);
+	pck_std_log.err( a_errno=> sqlcode, a_text=> dbms_utility.format_error_backtrace);
       raise;
    END get_all_columns;
 
@@ -132,10 +120,10 @@ EXCEPTION
       ltab_return t_column_dtype_map;
       l_column VARCHAR2(100);
   begin
-    debug( lc_cntxt, 'p_table:'||p_table );
+    pck_std_log.dbx( 'p_table:'||p_table );
     for i in 1 .. ptab_column.count loop
        l_column := ptab_column(i);
-       debug( lc_cntxt, 'l_column:'||l_column );
+       pck_std_log.dbx( 'l_column:'||l_column );
 
        select data_type into ltab_return( ptab_column (i) )
        from all_tab_columns
@@ -149,7 +137,7 @@ EXCEPTION
    WHEN NO_DATA_FOUND THEN
       RAISE_APPLICATION_ERROR( -20000, 'Could not determine data type for '||l_column );
    WHEN OTHERS THEN
-	logerror(lc_cntxt, sqlcode, dbms_utility.format_error_backtrace);
+	pck_std_log.err( a_errno=> sqlcode, a_text=> dbms_utility.format_error_backtrace);
       raise;
    end get_column_dtype_map;
    
@@ -223,7 +211,7 @@ AS
             ELSE substr/*c*/ (p_csv_string, l_scan_pos)
          END;
       l_scan_pos := l_scan_pos + length/*c*/ (l_line) + l_skip;
-      debug (lc_cntxt, 'eol_pos=' || l_eol_pos || ' skip=' || l_skip || ' scan_pos=' || l_scan_pos);
+      pck_std_log.dbx( 'eol_pos=' || l_eol_pos || ' skip=' || l_skip || ' scan_pos=' || l_scan_pos);
       RETURN l_line;
    END i$get_next_line;
 
@@ -232,7 +220,7 @@ BEGIN
    -- termination criteria for loop over lines in CSV string
    l_tot_len := length/*c*/ (p_csv_string);
 
-   debug (lc_cntxt, 'l_tot_len ='||l_tot_len
+   pck_std_log.dbx( 'l_tot_len ='||l_tot_len
 		||' p_standalone_head_line ='||p_standalone_head_line
    );
    --
@@ -248,7 +236,7 @@ BEGIN
 	else
 		ltab_col_nam := get_all_columns (p_standalone_head_line);
 	end if; -- check p_standalone_head_line
-   debug (lc_cntxt, 'Col count: ' || ltab_col_nam.COUNT);
+   pck_std_log.dbx( 'Col count: ' || ltab_col_nam.COUNT);
    
    /* Create target table if applicable
    */
@@ -269,7 +257,7 @@ BEGIN
       DBMS_SQL.parse (l_cur, l_insert2table_stmt, DBMS_SQL.native);
    EXCEPTION
       WHEN OTHERS THEN
-         loginfo (lc_cntxt, SUBSTR ('Error on parse: ' || l_insert2table_stmt, 1, 500));
+         pck_std_log.inf (SUBSTR ('Error on parse: ' || l_insert2table_stmt, 1, 500));
          RAISE;
    END parse_sql;
    lmap_column_dtype := get_column_dtype_map(p_schema=> p_target_schema,
@@ -283,7 +271,7 @@ BEGIN
    IF p_delete_before_insert2table THEN
 		l_sql := 'delete ' || CASE WHEN p_target_schema IS NOT NULL THEN p_target_schema || '.'
                         END || upper(p_target_object);
-		loginfo(lc_cntxt, l_sql);
+		pck_std_log.inf( l_sql);
       EXECUTE IMMEDIATE l_sql;
    END IF;   -- check delete flag
 
@@ -296,7 +284,7 @@ BEGIN
       l_line := i$get_next_line;
       l_line_no := l_line_no + 1;
 
-      debug (lc_cntxt, 'line ' || l_line_no || ' starts with: ' || SUBSTR (l_line, 1, 30));
+      pck_std_log.dbx( 'line ' || l_line_no || ' starts with: ' || SUBSTR (l_line, 1, 30));
  
       IF l_line IS NOT NULL THEN
         ltab_col_val := get_all_columns (l_line);
@@ -310,7 +298,7 @@ BEGIN
       END IF;   -- line not empty
 
    END LOOP;   -- over CSV string
-   loginfo(lc_cntxt, 'Value rows parsed: ' || l_line_no ||' insert2tableed: '||l_ins_cnt);
+   pck_std_log.inf( 'Value rows parsed: ' || l_line_no ||' insert2tableed: '||l_ins_cnt);
 
    COMMIT;
    /* restore nls setting 
@@ -325,7 +313,7 @@ BEGIN
 	;
 EXCEPTION
    WHEN OTHERS THEN
-	logerror(lc_cntxt, sqlcode, dbms_utility.format_error_backtrace );
+	pck_std_log.err( a_errno=>sqlcode, a_text=> dbms_utility.format_error_backtrace );
       ROLLBACK;
       raise;
 END insert2table;
@@ -473,7 +461,7 @@ AS
   vmap_column_dtype t_column_dtype_map;
   v_do_conversion BOOLEAN;
 BEGIN
-	loginfo( gc_pkg_name||'.'||$$plsql_line, 'file:'||p_file||' p_directory:'||p_directory );
+	pck_std_log.inf( 'file:'||p_file||' p_directory:'||p_directory );
   v_fh:= UTL_FILE.FOPEN( location=>p_directory, filename=> p_file, open_mode=> 'R', max_linesize => c_32k_minus_1
     );
   g_col_sep  := p_col_sep;   
@@ -488,7 +476,7 @@ BEGIN
         v_buf_converted := replace( v_buf, chr(0) );
         IF length( v_buf ) > length( v_buf_converted ) THEN
           v_do_conversion := TRUE;
-          loginfo( c_cntxt, 'Input data contains null bytes. will will always do conversion ');
+          pck_std_log.inf('Input data contains null bytes. will will always do conversion ');
         END IF;
       END IF;
       IF v_do_conversion THEN 
@@ -496,7 +484,7 @@ BEGIN
       END IF;
     EXCEPTION
       WHEN no_data_found THEN 
-        loginfo( c_cntxt, 'No more lines found after '||v_ln_cnt||' records');
+        pck_std_log.inf('No more lines found after '||v_ln_cnt||' records');
         v_countdown := 0; 
     END;
 
@@ -509,7 +497,7 @@ BEGIN
       else
         vtab_col_name := get_all_columns (p_standalone_head_line);
       end if; -- check p_standalone_head_line
-      loginfo (c_cntxt, 'Col count: ' || vtab_col_name.COUNT);
+      pck_std_log.inf( 'Col count: ' || vtab_col_name.COUNT);
 
        /* Create target table if applicable
        */
@@ -531,7 +519,7 @@ BEGIN
         DBMS_SQL.parse (v_prepared_cursor, v_insert2table_stmt, DBMS_SQL.native);
       EXCEPTION
         WHEN OTHERS THEN
-           loginfo ( c_cntxt, SUBSTR ('Error on parse: ' || v_insert2table_stmt, 1, 500));
+           pck_std_log.inf( SUBSTR ('Error on parse: ' || v_insert2table_stmt, 1, 500));
            RAISE;
       END parse_sql;
         vmap_column_dtype := get_column_dtype_map(p_schema=> p_target_schema,
@@ -544,7 +532,7 @@ BEGIN
       IF p_delete_before_insert2table THEN
         v_delete_stmt := 'delete ' || CASE WHEN p_target_schema IS NOT NULL THEN p_target_schema || '.'
                             END || upper(p_target_object);
-        loginfo(c_cntxt, v_delete_stmt);
+        pck_std_log.inf( v_delete_stmt);
         EXECUTE IMMEDIATE v_delete_stmt;
       END IF;   -- check delete flag
 
@@ -563,7 +551,7 @@ BEGIN
     --dbms_output.put_line(v_buf);
   END LOOP; -- over lines 
   UTL_FILE.FCLOSE( v_fh );
-  loginfo( c_cntxt, 'Lines found '||v_ln_cnt );
+  pck_std_log.inf('Lines found '||v_ln_cnt );
   
    /* restore nls setting 
    */
@@ -578,7 +566,7 @@ BEGIN
 
 EXCEPTION  
   WHEN OTHERS THEN 
-    logerror(c_cntxt, sqlcode, dbms_utility.format_error_backtrace);
+    pck_std_log.err( a_errno=> sqlcode, a_text=> dbms_utility.format_error_backtrace);
     IF utl_file.is_open( v_fh ) THEN 
       utl_file.fclose( v_fh );
     END IF;
@@ -627,7 +615,7 @@ BEGIN
 			execute immediate l_create_tab_stmt;
 		exception
 			when others then
-				loginfo($$plsql_unit||':'||$$plq_line, 'DDL stmt was: '|| l_create_tab_stmt);
+				pck_std_log.inf( 'DDL stmt was: '|| l_create_tab_stmt);
 				raise;
 		end create_table;
 END gp_create_target_table; 

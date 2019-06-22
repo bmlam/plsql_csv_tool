@@ -74,3 +74,7 @@ END;
 /
 
 SHOW errors
+
+create public synonym pkg_utl_csv for pkg_utl_csv;
+
+grant execute on pkg_utl_csv to public;
