@@ -488,6 +488,14 @@ BEGIN
         v_countdown := 0; 
     END;
 
+	IF substr( v_buf, -1 ) = chr(13) THEN 
+		v_buf := substr( v_buf, 1, length( v_buf ) - 1 );
+	END IF;
+
+	IF substr( v_buf, -1 ) = chr(13) THEN 
+		RAISE_APPLICATION_ERROR( -20001, 'Found character '|| ascii( substr( v_buf, -1 ) ) ||' at end of line '||v_ln_cnt ||'!' );
+	END IF;
+
     IF vtab_col_name.COUNT = 0 THEN 
       if p_standalone_head_line is null then
         if length(v_buf) = 1 or v_buf is null  then
@@ -712,10 +720,6 @@ BEGIN
          END LOOP;   -- over declaration of bind variables
 		begin
 			l_exec_status := DBMS_SQL.EXECUTE (p_prepared_cursor);
-        EXCEPTION
-               WHEN OTHERS THEN
-                  raise_application_error(-20000, 'Line=' || p_line_no_dbx ||': '||sqlerrm);
-                  RAISE;
         END exec_insert2table_stmt;
  END gp_insert_row;
  
