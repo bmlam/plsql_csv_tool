@@ -59,8 +59,15 @@ PROCEDURE gp_insert_row -- forward declaration
  ,pmap_col_data_type t_column_dtype_map
  ,p_line_no_dbx INTEGER 
 ) ;
+FUNCTION ident_is_normalizable ( pi_ident VARCHAR2 ) -- forward declaration
+RETURN NUMBER ;
  
-      /**************************************************************/
+PROCEDURE   gp_transform_idents ( -- forward declaration
+  ptab_ident_in DBMS_SQL.varchar2a
+ ,potab_ident OUT DBMS_SQL.varchar2a
+) ;
+
+/**************************************************************/
    FUNCTION get_column_dtype_map (
       ptab_column                              dbms_sql.varchar2a
       ,p_table varchar2
@@ -178,7 +185,8 @@ AS
    l_line                     LONG;
    l_tot_len                  INTEGER;
    l_ins_cnt                  INTEGER := 0;
-   ltab_col_nam               DBMS_SQL.varchar2a;
+   ltab_col_nam_input         DBMS_SQL.varchar2a;
+   ltab_col_nam_used          DBMS_SQL.varchar2a;
    ltab_col_val               DBMS_SQL.varchar2a;
    l_insert2table_stmt              LONG;
    l_cur                      INTEGER            := DBMS_SQL.open_cursor;
@@ -245,17 +253,18 @@ BEGIN
 		if length(l_line) = 1 or l_line is null  then
 			raise_application_error(-20000, 'the first line of the CSV text appears to be empty!');
 		end if; -- header line empty
-		ltab_col_nam := get_all_columns (l_line);
+		ltab_col_nam_input := get_all_columns (l_line);
 	else
-		ltab_col_nam := get_all_columns (p_standalone_head_line);
+		ltab_col_nam_input := get_all_columns (p_standalone_head_line);
 	end if; -- check p_standalone_head_line
-   debug( $$plsql_line,'Col count: ' || ltab_col_nam.COUNT);
+   debug( $$plsql_line,'Col count: ' || ltab_col_nam_input.COUNT);
    
+  gp_transform_idents ( ptab_ident_in => ltab_col_nam_input, potab_ident => ltab_col_nam_used );
    /* Create target table if applicable
    */
   if p_create_table then
     gp_create_target_table( p_target_schema=> p_target_schema, p_table_name => upper(p_target_object)
-      , ptab_col_name => ltab_col_nam
+      , ptab_col_name => ltab_col_nam_used 
       , p_create_column_length=> p_create_column_length
     );
    end if; -- p_create_table
@@ -263,7 +272,7 @@ BEGIN
    -- set up dynamic insert2table statement
    gp_compose_insert_stmt( p_target_schema => p_target_schema
     , p_table_name  => upper(p_target_object)
-    , ptab_col_name => ltab_col_nam
+    , ptab_col_name => ltab_col_nam_used 
     , po_sql_text => l_insert2table_stmt
     );
     BEGIN
@@ -274,7 +283,7 @@ BEGIN
          RAISE;
    END parse_sql;
    lmap_column_dtype := get_column_dtype_map(p_schema=> p_target_schema,
-    p_table => upper(p_target_object) , ptab_column => ltab_col_nam
+    p_table => upper(p_target_object) , ptab_column => ltab_col_nam_used 
     );
 
   gp_set_num_chars_with_backup( p_new_decimal_point=> p_decimal_point_char, po_old_value => l_nls_sess_num_chars );
@@ -303,7 +312,7 @@ BEGIN
         ltab_col_val := get_all_columns (l_line);
         gp_insert_row ( p_prepared_cursor => l_cur
          ,p_decimal_point_char => p_decimal_point_char
-         ,ptab_col_name  => ltab_col_nam         ,ptab_col_val  => ltab_col_val
+         ,ptab_col_name  => ltab_col_nam_used    ,ptab_col_val  => ltab_col_val
          ,pmap_col_data_type => lmap_column_dtype, p_line_no_dbx => l_line_no
          ) ;
                  
@@ -509,7 +518,7 @@ BEGIN
 		RAISE_APPLICATION_ERROR( -20001, 'Found character '|| ascii( substr( v_buf, -1 ) ) ||' at end of line '||v_ln_cnt ||'!' );
 	END IF;
 
-    IF vtab_col_name.COUNT = 0 THEN 
+IF vtab_col_name.COUNT = 0 THEN 
       if p_standalone_head_line is null then
         if length(v_buf) = 1 or v_buf is null  then
           raise_application_error(-20000, 'the first line of the CSV text appears to be empty!');
@@ -534,7 +543,7 @@ BEGIN
       , ptab_col_name => vtab_col_name
       , po_sql_text => v_insert2table_stmt
       );
-      
+          
       BEGIN
         v_prepared_cursor := dbms_sql.open_cursor;
         DBMS_SQL.parse (v_prepared_cursor, v_insert2table_stmt, DBMS_SQL.native);
@@ -626,7 +635,7 @@ BEGIN
 				when i = 1 then 'create table '||p_target_schema||'.'||p_table_name||'('
 				else l_create_tab_stmt||','
 			end ||gc_nl
-			||quote_str( ptab_col_name(i) )||' varchar2('||p_create_column_length||')'
+			||ptab_col_name(i)||' varchar2('||p_create_column_length||')'
 			;
 		end loop; -- over column names
 		-- finalize column list
@@ -735,21 +744,59 @@ BEGIN
 			l_exec_status := DBMS_SQL.EXECUTE (p_prepared_cursor);
         END exec_insert2table_stmt;
  END gp_insert_row;
+
+ FUNCTION ident_is_normalizable ( pi_ident VARCHAR2 ) 
+ RETURN NUMBER 
+  AS
+  BEGIN
+    CASE 
+    WHEN  REGEXP_LIKE ( UPPER ( SUBSTR(pi_ident, 1, 1 ) ) , '[A-Z]' )  
+      AND REGEXP_LIKE ( UPPER ( SUBSTR( RTRIM(pi_ident), 2 ) ) , '^[A-Z0-9_\$#]*$' ) 
+    THEN 
+        return 1;
+    ELSE 
+        return 0;
+    END CASE;
+  END ident_is_normalizable;
+
+  PROCEDURE   gp_transform_idents ( 
+    ptab_ident_in DBMS_SQL.varchar2a
+   ,potab_ident OUT DBMS_SQL.varchar2a
+  ) AS
+    lv_ident VARCHAR2(100);
+  BEGIN 
+    FOR i IN 1 .. ptab_ident_in.COUNT  
+    LOOP
+      lv_ident := ptab_ident_in(i);
+      lv_ident := 
+      CASE WHEN ident_is_normalizable ( lv_ident) = 1  
+         THEN UPPER( TRIM( ( lv_ident ) ) )
+         ELSE quote_str( lv_ident )
+         END 
+      ;
+      potab_ident(i) := lv_ident;
+    END LOOP;
+  END gp_transform_idents;
  
 BEGIN 
   -- load our data !
   INSERT2TABLE(
                 P_CSV_STRING => 
-q'{CH1;CH2;DT
-aaaa;bbbb;2010.12.31
-xxx;;
-kkkk;lll;
-;beta;
+q'{CLK	Lizenznehmer_Name	Paket_ID	Packet_Item_ID	Nutzung_von	Nutzung_bis_alt	Nutzung_bis_neu
+50152	Facebook Ireland Limited	104037	257320	01.06.2020	31.03.2020	30.06.2020
+50152	Facebook Ireland Limited	104037	257322	01.04.2020	31.01.2020	30.04.2020
+50152	Facebook Ireland Limited	104037	257329	01.05.2020	29.02.2020	31.05.2020
+50152	Facebook Ireland Limited	104037	257335	01.04.2020	31.01.2020	30.04.2020
+50152	Facebook Ireland Limited	104037	257348	01.05.2020	29.02.2020	31.05.2020
+50152	Facebook Ireland Limited	104037	257352	01.05.2020	29.02.2020	31.05.2020
+50152	Facebook Ireland Limited	104037	257355	01.06.2020	31.03.2020	30.06.2020
+50152	Facebook Ireland Limited	104037	257356	01.06.2020	31.03.2020	30.06.2020
+50152	Facebook Ireland Limited	104037	257359	01.06.2020	31.03.2020	30.06.2020
 }'				
-                ,P_TARGET_OBJECT =>   upper('test_csv_insert_dyn_create')
+                ,P_TARGET_OBJECT =>   upper('RITM0031938')
             --    ,P_TARGET_SCHEMA =>     ?P_TARGET_SCHEMA
                 ,P_DELETE_BEFORE_INSERT2TABLE => true
-                ,P_COL_SEP =>   ';'
+                ,P_COL_SEP =>   chr(9) 
            --     ,P_DECIMAL_POINT_CHAR =>        ?P_DECIMAL_POINT_CHAR
            --     ,P_DATE_FORMAT =>     'yyyy.mm.dd'
                 ,P_CREATE_TABLE =>   true
