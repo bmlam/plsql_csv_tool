@@ -1,6 +1,17 @@
+define pi_ticket_nr=&1 
+
+set serverout on 
+
+
+
+
+
+
 --CREATE OR REPLACE PROCEDURE lam_test_p1 as
 DECLARE 
-   
+   lv_ticket_nr VARCHAR2(20 CHAR) := '&pi_ticket_nr'; 
+   lv_output_table VARCHAR2(1000 CHAR); 
+
    gc_pkg_name constant varchar2(30) := $$plsql_unit;
    gc_nl        CONSTANT VARCHAR2 (10)      := CHR (10); 
    gc_dos_eol        CONSTANT VARCHAR2 (10)      := CHR (13) || CHR (10);   -- DOS style End Of Line
@@ -26,7 +37,7 @@ DECLARE
  )
  AS
  BEGIN 
-  dbms_output.put_line( p_context||': '||p_text );
+  null; -- dbms_output.put_line( p_context||': '||p_text );
  END debug
  ;
  PROCEDURE gp_set_num_chars_with_backup -- forward declaration
@@ -59,8 +70,15 @@ PROCEDURE gp_insert_row -- forward declaration
  ,pmap_col_data_type t_column_dtype_map
  ,p_line_no_dbx INTEGER 
 ) ;
+FUNCTION ident_is_normalizable ( pi_ident VARCHAR2 ) -- forward declaration
+RETURN NUMBER ;
  
-      /**************************************************************/
+PROCEDURE   gp_transform_idents ( -- forward declaration
+  ptab_ident_in DBMS_SQL.varchar2a
+ ,potab_ident OUT DBMS_SQL.varchar2a
+) ;
+
+/**************************************************************/
    FUNCTION get_column_dtype_map (
       ptab_column                              dbms_sql.varchar2a
       ,p_table varchar2
@@ -178,7 +196,8 @@ AS
    l_line                     LONG;
    l_tot_len                  INTEGER;
    l_ins_cnt                  INTEGER := 0;
-   ltab_col_nam               DBMS_SQL.varchar2a;
+   ltab_col_nam_input         DBMS_SQL.varchar2a;
+   ltab_col_nam_used          DBMS_SQL.varchar2a;
    ltab_col_val               DBMS_SQL.varchar2a;
    l_insert2table_stmt              LONG;
    l_cur                      INTEGER            := DBMS_SQL.open_cursor;
@@ -245,17 +264,18 @@ BEGIN
 		if length(l_line) = 1 or l_line is null  then
 			raise_application_error(-20000, 'the first line of the CSV text appears to be empty!');
 		end if; -- header line empty
-		ltab_col_nam := get_all_columns (l_line);
+		ltab_col_nam_input := get_all_columns (l_line);
 	else
-		ltab_col_nam := get_all_columns (p_standalone_head_line);
+		ltab_col_nam_input := get_all_columns (p_standalone_head_line);
 	end if; -- check p_standalone_head_line
-   debug( $$plsql_line,'Col count: ' || ltab_col_nam.COUNT);
+   debug( $$plsql_line,'Col count: ' || ltab_col_nam_input.COUNT);
    
+  gp_transform_idents ( ptab_ident_in => ltab_col_nam_input, potab_ident => ltab_col_nam_used );
    /* Create target table if applicable
    */
   if p_create_table then
     gp_create_target_table( p_target_schema=> p_target_schema, p_table_name => upper(p_target_object)
-      , ptab_col_name => ltab_col_nam
+      , ptab_col_name => ltab_col_nam_used 
       , p_create_column_length=> p_create_column_length
     );
    end if; -- p_create_table
@@ -263,7 +283,7 @@ BEGIN
    -- set up dynamic insert2table statement
    gp_compose_insert_stmt( p_target_schema => p_target_schema
     , p_table_name  => upper(p_target_object)
-    , ptab_col_name => ltab_col_nam
+    , ptab_col_name => ltab_col_nam_used 
     , po_sql_text => l_insert2table_stmt
     );
     BEGIN
@@ -274,7 +294,7 @@ BEGIN
          RAISE;
    END parse_sql;
    lmap_column_dtype := get_column_dtype_map(p_schema=> p_target_schema,
-    p_table => upper(p_target_object) , ptab_column => ltab_col_nam
+    p_table => upper(p_target_object) , ptab_column => ltab_col_nam_used 
     );
 
   gp_set_num_chars_with_backup( p_new_decimal_point=> p_decimal_point_char, po_old_value => l_nls_sess_num_chars );
@@ -303,7 +323,7 @@ BEGIN
         ltab_col_val := get_all_columns (l_line);
         gp_insert_row ( p_prepared_cursor => l_cur
          ,p_decimal_point_char => p_decimal_point_char
-         ,ptab_col_name  => ltab_col_nam         ,ptab_col_val  => ltab_col_val
+         ,ptab_col_name  => ltab_col_nam_used    ,ptab_col_val  => ltab_col_val
          ,pmap_col_data_type => lmap_column_dtype, p_line_no_dbx => l_line_no
          ) ;
                  
@@ -509,7 +529,7 @@ BEGIN
 		RAISE_APPLICATION_ERROR( -20001, 'Found character '|| ascii( substr( v_buf, -1 ) ) ||' at end of line '||v_ln_cnt ||'!' );
 	END IF;
 
-    IF vtab_col_name.COUNT = 0 THEN 
+IF vtab_col_name.COUNT = 0 THEN 
       if p_standalone_head_line is null then
         if length(v_buf) = 1 or v_buf is null  then
           raise_application_error(-20000, 'the first line of the CSV text appears to be empty!');
@@ -534,7 +554,7 @@ BEGIN
       , ptab_col_name => vtab_col_name
       , po_sql_text => v_insert2table_stmt
       );
-      
+          
       BEGIN
         v_prepared_cursor := dbms_sql.open_cursor;
         DBMS_SQL.parse (v_prepared_cursor, v_insert2table_stmt, DBMS_SQL.native);
@@ -626,7 +646,7 @@ BEGIN
 				when i = 1 then 'create table '||p_target_schema||'.'||p_table_name||'('
 				else l_create_tab_stmt||','
 			end ||gc_nl
-			||quote_str( ptab_col_name(i) )||' varchar2('||p_create_column_length||')'
+			||ptab_col_name(i)||' varchar2('||p_create_column_length||')'
 			;
 		end loop; -- over column names
 		-- finalize column list
@@ -735,28 +755,119 @@ BEGIN
 			l_exec_status := DBMS_SQL.EXECUTE (p_prepared_cursor);
         END exec_insert2table_stmt;
  END gp_insert_row;
+
+ FUNCTION ident_is_normalizable ( pi_ident VARCHAR2 ) 
+ RETURN NUMBER 
+  AS
+  BEGIN
+    CASE 
+    WHEN  REGEXP_LIKE ( UPPER ( SUBSTR(pi_ident, 1, 1 ) ) , '[A-Z]' )  
+      AND REGEXP_LIKE ( UPPER ( SUBSTR( RTRIM(pi_ident), 2 ) ) , '^[A-Z0-9_\$#]*$' ) 
+    THEN 
+        return 1;
+    ELSE 
+        return 0;
+    END CASE;
+  END ident_is_normalizable;
+
+  PROCEDURE   gp_transform_idents ( 
+    ptab_ident_in DBMS_SQL.varchar2a
+   ,potab_ident OUT DBMS_SQL.varchar2a
+  ) AS
+    lv_ident VARCHAR2(100);
+  BEGIN 
+    FOR i IN 1 .. ptab_ident_in.COUNT  
+    LOOP
+      lv_ident := ptab_ident_in(i);
+      lv_ident := 
+      CASE WHEN ident_is_normalizable ( lv_ident) = 1  
+         THEN UPPER( TRIM( ( lv_ident ) ) )
+         ELSE quote_str( lv_ident )
+         END 
+      ;
+      potab_ident(i) := lv_ident;
+    END LOOP;
+  END gp_transform_idents;
  
 BEGIN 
+  lv_output_table := upper(lv_ticket_nr||'_csv');
   -- load our data !
   INSERT2TABLE(
                 P_CSV_STRING => 
-q'{CH1;CH2;DT
-aaaa;bbbb;2010.12.31
-xxx;;
-kkkk;lll;
-;beta;
+q'{PKTITM_ID	CDDEF_ID	Reported_QUANTITY	NEW_QUANTITY
+267633	45497	758	423
+267633	45499	758	335
+267634	45497	1182	620
+267634	45499	1182	562
+267635	45497	2822	1826
+267635	45499	2822	996
+267636	45497	16342	8274
+267636	45499	16342	8068
+267637	45497	339	247
+267637	45499	339	92
+267638	45497	1499	964
+267638	45499	1499	535
+267639	45497	161	146
+267639	45499	161	15
+267640	45497	11712	7769
+267640	45499	11712	3943
+267641	45497	43951	23848
+267641	45499	43951	20103
+267642	45497	2475	1294
+267642	45499	2475	1181
+267643	45497	1027	650
+267643	45499	1027	377
+267644	45497	4846	3138
+267644	45499	4846	1708
+267645	45497	428	282
+267645	45499	428	146
+267646	45497	581	407
+267646	45499	581	174
+267647	45497	576	429
+267647	45499	576	147
+267648	34251	7250	5057
+267648	34253	7250	2193
+267649	34251	8836	5595
+267649	34253	8836	3241
+267650	34251	12204	8997
+267650	34253	12204	3207
+267651	34251	95679	54992
+267651	34253	95679	40687
+267652	34251	4142	3510
+267652	34253	4142	632
+267653	34251	13718	10445
+267653	34253	13718	3273
+267654	34251	2644	2393
+267654	34253	2644	251
+267655	34251	75291	53332
+267655	34253	75291	21959
+267656	34251	200751	124467
+267656	34253	200751	76284
+267657	34251	13260	8161
+267657	34253	13260	5099
+267658	34251	9224	6807
+267658	34253	9224	2417
+267659	34251	21677	15724
+267659	34253	21677	5953
+267660	34251	5397	3571
+267660	34253	5397	1826
+267661	34251	3164	2123
+267661	34253	3164	1041
+267662	34251	6898	5403
+267662	34253	6898	1495 
 }'				
-                ,P_TARGET_OBJECT =>   upper('test_csv_insert_dyn_create')
+                ,P_TARGET_OBJECT =>   lv_output_table 
             --    ,P_TARGET_SCHEMA =>     ?P_TARGET_SCHEMA
-                ,P_DELETE_BEFORE_INSERT2TABLE => true
-                ,P_COL_SEP =>   ';'
+                ,P_DELETE_BEFORE_INSERT2TABLE => TRUE 
+                ,P_COL_SEP =>   chr(9) 
            --     ,P_DECIMAL_POINT_CHAR =>        ?P_DECIMAL_POINT_CHAR
-           --     ,P_DATE_FORMAT =>     'yyyy.mm.dd'
+                ,P_DATE_FORMAT =>     'dd.Mon.rr'
                 ,P_CREATE_TABLE =>   true
                 ,P_CREATE_column_length => 50
 				);
-
+  dbms_output.put_line( 'check output table '||lv_output_table );
 end; 
 /
 
 SHOW errors
+

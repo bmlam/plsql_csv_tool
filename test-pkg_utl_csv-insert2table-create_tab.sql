@@ -28,5 +28,4 @@ end;
 /				
 
 
-select *
-from test_csv_insert_dyn_create;
+select * from test_csv_insert_dyn_create;
