@@ -1,4 +1,4 @@
-#! /c/Users/user1/AppData/Local/Programs/Python/Python37-32/python3
+#! /c/Users/bonlam/AppData/Local/Programs/Python/Python37-32/python3
 
 """ This program reads a the content of a CSV file and split it into chunks of PLSQL literals,
 as ORA_MINING_VARCHAR2_NT
@@ -38,7 +38,7 @@ def _dbx( msg ):
     print( "dbx: %s" % (msg) ) 
 
 def main(): 
-  literalTemplate = """q'[{line}]' 
+  literalTemplate = """q'[{header}\n{lines}]' 
 """
   homeLocation = os.path.expanduser( "~" )
   cmdLnConfig = parseCmdLine()
@@ -48,38 +48,35 @@ def main():
   _dbx( "lines read: %d" % len( csvLines ) ) 
   fh.close()
 
-  LITERAL_MAX_SIZE = 4000 ; SAFETY_GAP = 2; LINEBREAK_SIZE = 2 
+  LITERAL_MAX_SIZE = 4000 ; SAFETY_GAP = 5; LINEBREAK_SIZE = 2 
   chunks = []
-  resetChunk = True 
+  linesInChunk = []
+  currChunkLen = 0 
   headerLine = ""
   for ix, line in enumerate( csvLines ):
     if ix == 0: 
-      headerLine = line.rstrip( "\n" ) 
+      headerLine = line.rstrip( "\n" )  + " " # trailing blank to offset bug in PLSQL code!
+      addHeader = True 
       continue   # hold back this from first chunk as we will add header line for all chunks 
 
-    if resetChunk:
-      linesInChunk = []; currChunkLen = 0
-      linesInChunk.append( headerLine + " ") 
+    finalizeChunk = len( headerLine ) + currChunkLen + len( line ) + SAFETY_GAP + LINEBREAK_SIZE >= LITERAL_MAX_SIZE 
 
-    _dbx( "lineNo: %d currChunkLen: %d " % ( ix, currChunkLen ) )
-    if currChunkLen + len( line ) + SAFETY_GAP + LINEBREAK_SIZE < LITERAL_MAX_SIZE:
-      # buffer line in chunk 
-      linesInChunk.append(line.rstrip("\n") + " ")
-      currChunkLen += len( line ) + LINEBREAK_SIZE 
-      resetChunk = False 
-    else:
-      if ix < 500: 
-        _dbx( "lineNo: %d len of linesInChunk:%d" % ( ix, len(linesInChunk) ) )
-
+    if finalizeChunk : 
       # finalize current chunk 
-      chunk = literalTemplate.format( line= "\n".join( linesInChunk ) ) 
+      chunk = literalTemplate.format( header= headerLine, lines = "\n".join( linesInChunk ) ) 
       chunks.append( chunk )
+      linesInChunk = [ ]; currChunkLen = 0
 
-      resetChunk = True 
+    if ix < 50: 
+      _dbx( "lineNo: %d currChunkLen: %d " % ( ix, currChunkLen ) )
 
-      if len( chunks ) == 1:
-        _dbx( "first chars of chunk:\n%s" % ( chunk[0:100] ) )
-      # f ix > 12000: break 
+    # buffer line in chunk 
+    linesInChunk.append(line.rstrip("\n") + " ")
+    currChunkLen += len( line ) + LINEBREAK_SIZE 
+
+  if len( linesInChunk ) > 1:
+      chunk = literalTemplate.format( header = headerLine, lines= "\n".join( linesInChunk ) ) 
+      chunks.append( chunk )
   
   outFile = tempfile.mkstemp( suffix= ".sql" )[1]
 
