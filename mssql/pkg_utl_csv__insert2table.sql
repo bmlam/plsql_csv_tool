@@ -11,21 +11,54 @@ GO
 -- hence an option to delete the table content beforehand is provided
 -- if @a_header_line is not provided, it is assumed to be the first line in the csv literal 
 
+
+
+
+
+
+
+
 CREATE PROCEDURE pkg_utl_csv__insert2table
- @p_target_object    varchar(100)
- ,@p_csv_string      nvarchar(4000)
- ,@p_col_sep     nvarchar(10) = N';'
- ,@p_standalone_head_line varchar(1000) = NULL 
- ,@p_delete_before_insert2table varchar(1) = 'N'
+ @p_target_object    VARCHAR(100)
+ ,@p_csv_string      NVARCHAR(4000)
+ ,@p_col_sep     NVARCHAR(10) = N';'
+ ,@p_standalone_head_line VARCHAR(1000) = NULL 
+ ,@p_delete_before_insert2table VARCHAR(1) = 'N'
 
 AS
-DECLARE 
-   @v_msg varchar(1000)
-   ;
 BEGIN
+DECLARE 
+   @records  TABLE ( colVar NVARCHAR(4000) )
+DECLARE @v_msg VARCHAR(1000)
+   ,@preparedStmt Int
+   ,@DOS_LINE_BREAK NVARCHAR(2)
+   ,@UNIX_LINE_BREAK NVARCHAR(2)
+   ,@lineBreakStyleIsDOS BIT
+   ,@recordCount Int
+
    SET @v_msg = 'tgt table ' + @p_target_object + ' csv size: ' + CAST ( LEN(@p_csv_string) as varchar(5))
    EXEC pkg_std_log__info @v_msg 
+
+   SET @DOS_LINE_BREAK = CAST( CHAR(13) + CHAR(10) AS NVARCHAR(2))
+   SET @UNIX_LINE_BREAK = CAST( CHAR(10) AS NVARCHAR(2))
+
+   IF CHARINDEX( @DOS_LINE_BREAK, @p_csv_string) > 0 SET @lineBreakStyleIsDOS = 1
+   ELSE  SET @lineBreakStyleIsDOS = 0
+
+   IF @lineBreakStyleIsDOS = 1
+   BEGIN
+      INSERT @records ( colVar )
+      SELECT colVar FROM tools__split2StringElements( @p_csv_string, @DOS_LINE_BREAK )
+   END 
+   ELSE
+   BEGIN
+      INSERT @records ( colVar )
+      SELECT colVar FROM tools__split2StringElements( @p_csv_string, @UNIX_LINE_BREAK )
+   END
+   SELECT @recordCount = COUNT(1) FROM @records
    
+   SET @v_msg = 'recordCount: ' + CAST( @recordCount AS NVARCHAR(10) ) 
+   EXEC pkg_std_log__info @v_msg
 END;
 GO
 

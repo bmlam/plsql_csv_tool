@@ -12,10 +12,10 @@ CREATE OR ALTER FUNCTION tools__split2StringElements (
 @p_src_string NVARCHAR(4000)
 ,@p_sep NVARCHAR(10) = N';' 
 )
-RETURNS @retVal  TABLE ( colVar NVARCHAR(100) )
+RETURNS @retVal  TABLE ( colVar NVARCHAR(4000) )
 AS
 BEGIN
-DECLARE @buf NVARCHAR(1000), @found Int , @elem NVARCHAR(100), @sepLen Int , @countDown Int 
+DECLARE @buf NVARCHAR(4000), @found Int , @elem NVARCHAR(4000), @sepLen Int , @countDown Int 
     SET @sepLen = LEN( @p_sep )
     SET @buf = @p_src_string
     SET @found = CHARINDEX( @p_sep, @buf)
