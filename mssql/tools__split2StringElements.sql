@@ -12,7 +12,7 @@ CREATE OR ALTER FUNCTION tools__split2StringElements (
 @p_src_string NVARCHAR(4000)
 ,@p_sep NVARCHAR(10) = N';' 
 )
-RETURNS @retVal  TABLE ( colVar NVARCHAR(4000) )
+RETURNS @retVal  TABLE ( columnValue NVARCHAR(4000) )
 AS
 BEGIN
 DECLARE @buf NVARCHAR(4000), @found Int , @elem NVARCHAR(4000), @sepLen Int , @countDown Int 
