@@ -24,6 +24,8 @@ CREATE PROCEDURE pkg_utl_csv__insert2table
  ,@p_col_sep     NVARCHAR(10) = N';'
  ,@p_standalone_head_line VARCHAR(1000) = NULL 
  ,@p_delete_before_insert2table VARCHAR(1) = 'N'
+ ,@p_create_table VARCHAR(1) = 'N'
+ ,@p_new_column_size Int = 100
 
 AS
 BEGIN
@@ -34,13 +36,17 @@ DECLARE
 DECLARE @msg VARCHAR(1000)
    ,@insertHandle Int
    ,@loopIx Int
+   ,@createTableStatement NVARCHAR(4000)
+   ,@oneRecord  NVARCHAR(4000)
    ,@insertColumnClause NVARCHAR(1000)
    ,@insertValueClause NVARCHAR(1000)
+   ,@insertStatement NVARCHAR(4000)
    ,@bindVarsSpecs   NVARCHAR(1000)
    ,@DOS_LINE_BREAK NVARCHAR(2)
    ,@UNIX_LINE_BREAK NVARCHAR(2)
    ,@lineBreakStyleIsDOS BIT
    ,@recordCount Int
+   ,@tgtColCount Int
    ,@columnHeadLine NVARCHAR(1000)
    ,@tgtColName    NVARCHAR(100)
 
@@ -80,11 +86,15 @@ DECLARE @msg VARCHAR(1000)
    IF @p_standalone_head_line IS NULL 
    BEGIN 
       SELECT TOP 1 @columnHeadLine = columnValue FROM @records
+      DELETE TOP (1) FROM @records 
+      SET @msg = 'recordCount: ' + CAST( @recordCount AS NVARCHAR(10) ) 
+      EXEC pkg_std_log__dbx @msg
    END
    ELSE SET @columnHeadLine = @p_standalone_head_line
 
    INSERT @tgtColumns ( columnName )
    SELECT columnValue FROM tools__split2StringElements( @columnHeadLine, @p_col_sep )
+   SELECT @tgtColCount = COUNT(1) FROM @tgtColumns
 
    -- construct INSERT statement 
 
@@ -98,6 +108,18 @@ DECLARE @msg VARCHAR(1000)
    WHILE @@FETCH_STATUS = 0
    BEGIN
       SET @loopIx += 1 
+
+      IF @p_create_table = 'Y'
+         SET @createTableStatement = 
+            CASE WHEN @createTableStatement IS NULL 
+            THEN 
+               N'CREATE TABLE ' + @p_target_object + N'('
+            ELSE 
+               @createTableStatement + N', '
+            END
+            + @tgtColName + ' NVARCHAR(' + CAST( @p_new_column_size AS NVARCHAR(4)) + ')'
+            + CASE WHEN @loopIx = @tgtColCount THEN N')' ELSE N'' END
+
       SET @insertColumnClause = 
          CASE WHEN @insertColumnClause IS NULL 
          THEN 
@@ -131,13 +153,46 @@ DECLARE @msg VARCHAR(1000)
 
    CLOSE tgtColCursor
 
-   SET @msg = N'insert column clause: ' + @insertColumnClause 
+   SET @msg = N'column clause: ' + @insertColumnClause 
    EXEC pkg_std_log__dbx @msg 
-   SET @msg = N'insert values clause: ' + @insertValueClause 
+   SET @msg = N'values clause: ' + @insertValueClause 
    EXEC pkg_std_log__dbx @msg 
    SET @msg = N'bind var specs: ' + @bindVarsSpecs 
    EXEC pkg_std_log__dbx @msg 
 
+   IF @p_create_table = 'Y'
+   BEGIN 
+      SET @msg = N'DDL: ' + @createTableStatement 
+      EXEC pkg_std_log__dbx @msg 
+
+      EXEC sp_executeSql @createTableStatement
+   END;
+
+   -- prepare INSERT statement 
+   SET @insertStatement = @insertColumnClause + ' ' + @insertValueClause
+   EXEC sp_prepare @insertHandle OUTPUT
+      ,@bindVarsSpecs
+      ,@insertStatement
+
+   DECLARE cursorRecords CURSOR FOR 
+      SELECT columnValue FROM @records
+
+   OPEN cursorRecords
+   FETCH NEXT FROM cursorRecords INTO @oneRecord 
+
+   SET @loopIx = 0 
+   WHILE @@FETCH_STATUS = 0
+   BEGIN
+      SET @loopIx += 1 
+
+      FETCH NEXT FROM cursorRecords INTO @oneRecord 
+   END
+   CLOSE cursorRecords
+
+   SET @msg = N'Records processed: ' + CONVERT( NVARCHAR, @loopIx)
+   EXEC pkg_std_log__dbx @msg 
+
+   EXEC sp_unprepare @insertHandle
 END;
 GO
 
