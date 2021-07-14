@@ -1,24 +1,14 @@
 use testdb1;
 GO
 
-IF OBJECT_ID ( 'pkg_utl_csv__insert2table', 'P' ) IS NOT NULL
-    DROP PROCEDURE pkg_utl_csv__insert2table;
-GO
-
-
--- insert the CSV literal into the given target table
--- it is strongly recommended to use staging/import table
--- hence an option to delete the table content beforehand is provided
--- if @a_header_line is not provided, it is assumed to be the first line in the csv literal 
 
 
 
 
-
-
-
-
-CREATE PROCEDURE pkg_utl_csv__insert2table
+--IF OBJECT_ID ( 'pkg_utl_csv__insert2table', 'P' ) IS NULL 
+   CREATE PROCEDURE pkg_utl_csv__insert2table AS BEGIN DECLARE @dummy INT; END;
+--GO
+ALTER PROCEDURE pkg_utl_csv__insert2table
  @p_target_object    VARCHAR(100)
  ,@p_csv_string      NVARCHAR(4000)
  ,@p_col_sep     NVARCHAR(10) = N';'
@@ -26,27 +16,36 @@ CREATE PROCEDURE pkg_utl_csv__insert2table
  ,@p_delete_before_insert2table VARCHAR(1) = 'N'
  ,@p_create_table VARCHAR(1) = 'N'
  ,@p_new_column_size Int = 100
-
 AS
+-- insert the CSV literal into the given target table
+-- it is strongly recommended to use staging/import table
+-- hence an option to delete the table content beforehand is provided
+-- if @a_header_line is not provided, it is assumed to be the first line in the csv literal 
 BEGIN
 DECLARE 
    @records  TABLE ( id_ Int, columnValue NVARCHAR(4000) )
 DECLARE 
    @tgtColumns  TABLE ( id_ Int, columnName NVARCHAR(4000) )
+DECLARE 
+   @columnValues  TABLE ( id_ Int, columnValue NVARCHAR(4000) )
 DECLARE @msg VARCHAR(1000)
-   ,@insertHandle Int
+   --,@insertHandle Int
    ,@loopIx Int
+   ,@colIx Int
+   ,@recordIx Int
    ,@createTableStatement NVARCHAR(4000)
-   ,@oneRecord  NVARCHAR(4000)
+   ,@recordCsv  NVARCHAR(4000)
+   ,@columnLiteral  NVARCHAR(4000)
    ,@insertColumnClause NVARCHAR(1000)
    ,@insertValueClause NVARCHAR(1000)
    ,@insertStatement NVARCHAR(4000)
-   ,@bindVarsSpecs   NVARCHAR(1000)
+   --,@bindVarsSpecs   NVARCHAR(1000)
    ,@DOS_LINE_BREAK NVARCHAR(2)
    ,@UNIX_LINE_BREAK NVARCHAR(2)
    ,@lineBreakStyleIsDOS BIT
    ,@recordCount Int
    ,@tgtColCount Int
+   ,@deletedCnt  Int
    ,@columnHeadLine NVARCHAR(1000)
    ,@tgtColName    NVARCHAR(100)
    ,@shortDML NVARCHAR(1000)
@@ -57,9 +56,9 @@ DECLARE @msg VARCHAR(1000)
 
    -- the following does not seem to work!
    -- exec pkg_std_log__set_quota 'session_dbx_quota', 50
-
+   --
    -- Determine line break style before splitting into lines
-
+   --
    SET @DOS_LINE_BREAK = CAST( CHAR(13) + CHAR(10) AS NVARCHAR(2))
    SET @UNIX_LINE_BREAK = CAST( CHAR(10) AS NVARCHAR(2))
 
@@ -101,8 +100,9 @@ DECLARE @msg VARCHAR(1000)
 
    SELECT @tgtColCount = COUNT(1) FROM @tgtColumns
 
-   -- construct INSERT statement 
-
+   --
+   -- construct fragments of INSERT statement , but also of CREATE TABLE 
+   --
    DECLARE tgtColCursor CURSOR FOR 
       SELECT columnName FROM @tgtColumns ORDER BY id_
 
@@ -134,22 +134,22 @@ DECLARE @msg VARCHAR(1000)
          END
          + @tgtColName
 
-       SET @insertValueClause = 
-         CASE WHEN @insertValueClause IS NULL 
-         THEN 
-            N' VALUES ( '
-         ELSE 
-            @insertValueClause + N', '
-         END
-         + N'@b' + CAST( @loopIx AS NVARCHAR(3))
-
-       SET @bindVarsSpecs = 
-         CASE WHEN @bindVarsSpecs IS NOT NULL 
-         THEN 
-            @bindVarsSpecs + N', '
-         ELSE N''
-         END
-         + N'@b' + CAST( @loopIx AS NVARCHAR(3)) + N' NVARCHAR(1000)'
+       --SET @insertValueClause = 
+       --  CASE WHEN @insertValueClause IS NULL 
+       --  THEN 
+       --     N' VALUES ( '
+       --  ELSE 
+       --     @insertValueClause + N', '
+       --  END
+       --  + N'@b' + CAST( @loopIx AS NVARCHAR(3))
+--
+       --SET @bindVarsSpecs = 
+       --  CASE WHEN @bindVarsSpecs IS NOT NULL 
+       --  THEN 
+       --     @bindVarsSpecs + N', '
+       --  ELSE N''
+       --  END
+       --  + N'@b' + CAST( @loopIx AS NVARCHAR(3)) + N' NVARCHAR(1000)'
 
       FETCH NEXT FROM tgtColCursor INTO @tgtColName 
    END
@@ -160,12 +160,14 @@ DECLARE @msg VARCHAR(1000)
 
    SET @msg = N'column clause: ' + @insertColumnClause 
    EXEC pkg_std_log__dbx @msg 
-   SET @msg = N'values clause: ' + @insertValueClause 
-   EXEC pkg_std_log__dbx @msg 
-   SET @msg = N'bind var specs: ' + @bindVarsSpecs 
-   EXEC pkg_std_log__dbx @msg 
+   --SET @msg = N'values clause: ' + @insertValueClause 
+   --EXEC pkg_std_log__dbx @msg 
+   --SET @msg = N'bind var specs: ' + @bindVarsSpecs 
+   --EXEC pkg_std_log__dbx @msg 
 
+   --
    -- Create table if appropiate 
+   --
    IF @p_create_table = 'Y'
    BEGIN 
       SET @msg = N'DDL: ' + @createTableStatement 
@@ -188,7 +190,9 @@ DECLARE @msg VARCHAR(1000)
       END CATCH
    END  
 
+   --
    -- empty table if needed
+   --
    IF @p_delete_before_insert2table = 'Y'
    BEGIN
       SET @shortDML =  N'DELETE FROM ' + @p_target_object 
@@ -199,42 +203,77 @@ DECLARE @msg VARCHAR(1000)
       BEGIN TRY 
          BEGIN transaction 
          EXEC sp_executeSql @shortDML
+         SET @deletedCnt = @@ROWCOUNT
          COMMIT transaction
-         SET @msg = N'Rows deleted ' + CONVERT( NVARCHAR, @@ROWCOUNT)
-         EXEC pkg_std_log__info @msg 
       END TRY
       BEGIN CATCH 
          SELECT @msg = dbo.tools__formatErrMsg( N'On delete target')
          EXEC pkg_std_log__err @msg 
 
       END CATCH
+
+      SET @msg = N'Rows deleted: ' + ISNULL( CONVERT( NVARCHAR, @deletedCnt), N'?' ) 
+      EXEC pkg_std_log__info @msg 
+
    END  
 
-   -- prepare INSERT statement 
-   SET @insertStatement = @insertColumnClause + ' ' + @insertValueClause
-   EXEC sp_prepare @insertHandle OUTPUT
-      ,@bindVarsSpecs
-      ,@insertStatement
+   --
+   -- would be better to use prepare INSERT statement 
+   -- UNFORTUNATELY there is no way to pass the bind variables as one single input table 
+   --
+   --SET @insertStatement = @insertColumnClause + ' ' + @insertValueClause
+   --EXEC sp_prepare @insertHandle OUTPUT
+   --   ,@bindVarsSpecs
+   --   ,@insertStatement
 
+   --
+   -- Insert the CSV records 
+   --
    DECLARE cursorRecords CURSOR FOR 
-      SELECT columnValue FROM @records
+      SELECT id_, columnValue FROM @records ORDER BY id_ 
 
+   
    OPEN cursorRecords
-   FETCH NEXT FROM cursorRecords INTO @oneRecord 
+   FETCH NEXT FROM cursorRecords INTO @recordIx, @recordCsv  
 
-   SET @loopIx = 0 
    WHILE @@FETCH_STATUS = 0
    BEGIN
-      SET @loopIx += 1 
+      INSERT @columnValues (id_, columnValue ) SELECT id_, columnValue 
+      FROM tools__split2StringElements( @recordCsv, N';' )
+      --
+      -- construct column literals of INSERT. Unfortunately it is not possible to use prepared statement
+      --
+      DECLARE cursorBindVars CURSOR FOR 
+         SELECT id_, columnValue FROM @columnValues ORDER BY id_ 
+      OPEN cursorBindVars
+      FETCH NEXT FROM cursorBindVars INTO @colIx, @columnLiteral
+      WHILE @@FETCH_STATUS = 0
+      BEGIN
+ 
+         SET @insertValueClause = 
+           CASE WHEN @colIx = 1
+           THEN 
+              N' VALUES ( '
+           ELSE 
+              @insertValueClause + N', ' 
+           END
+           + N'''' + @columnLiteral + N''''
+         
+         SET @insertStatement = @insertColumnClause + N' ' + @insertColumnClause
+         EXEC sp_executeSql 
 
-      FETCH NEXT FROM cursorRecords INTO @oneRecord 
+         FETCH NEXT FROM cursorBindVars INTO @colIx, @columnLiteral 
+      END
+      CLOSE cursorBindVars
+
+      FETCH NEXT FROM cursorRecords INTO @recordIx, @recordCsv  
    END
    CLOSE cursorRecords
 
-   SET @msg = N'Records processed: ' + CONVERT( NVARCHAR, @loopIx)
+   SELECT @msg = N'Records processed: ' + CONVERT( NVARCHAR, COUNT(1)) FROM @records
    EXEC pkg_std_log__dbx @msg 
 
-   EXEC sp_unprepare @insertHandle
+   --EXEC sp_unprepare @insertHandle
 END;
 GO
 
