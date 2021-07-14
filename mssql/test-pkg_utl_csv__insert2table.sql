@@ -7,4 +7,6 @@ banana;;another tasty fruit
 chip;;no price
 ;;;
 ;3;no such product
-' , @p_create_table = 'Y'
+' 
+, @p_create_table = 'Y'
+, @p_delete_before_insert2table = 'Y'

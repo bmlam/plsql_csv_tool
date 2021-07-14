@@ -30,9 +30,9 @@ CREATE PROCEDURE pkg_utl_csv__insert2table
 AS
 BEGIN
 DECLARE 
-   @records  TABLE ( columnValue NVARCHAR(4000) )
+   @records  TABLE ( id_ Int, columnValue NVARCHAR(4000) )
 DECLARE 
-   @tgtColumns  TABLE ( columnName NVARCHAR(4000) )
+   @tgtColumns  TABLE ( id_ Int, columnName NVARCHAR(4000) )
 DECLARE @msg VARCHAR(1000)
    ,@insertHandle Int
    ,@loopIx Int
@@ -49,6 +49,7 @@ DECLARE @msg VARCHAR(1000)
    ,@tgtColCount Int
    ,@columnHeadLine NVARCHAR(1000)
    ,@tgtColName    NVARCHAR(100)
+   ,@shortDML NVARCHAR(1000)
 
    -- 
    SET @msg = 'tgt table ' + @p_target_object + ' csv size: ' + CAST ( LEN(@p_csv_string) as varchar(5))
@@ -67,13 +68,15 @@ DECLARE @msg VARCHAR(1000)
 
    IF @lineBreakStyleIsDOS = 1
    BEGIN
-      INSERT @records ( columnValue )
-      SELECT columnValue FROM tools__split2StringElements( @p_csv_string, @DOS_LINE_BREAK )
+      INSERT @records ( id_, columnValue )
+      SELECT id_, columnValue FROM tools__split2StringElements( @p_csv_string, @DOS_LINE_BREAK )
+      ORDER BY id_ 
    END 
    ELSE
    BEGIN
-      INSERT @records ( columnValue )
-      SELECT columnValue FROM tools__split2StringElements( @p_csv_string, @UNIX_LINE_BREAK )
+      INSERT @records ( id_, columnValue )
+      SELECT id_, columnValue FROM tools__split2StringElements( @p_csv_string, @UNIX_LINE_BREAK )
+      ORDER BY id_ 
    END
    SELECT @recordCount = COUNT(1) FROM @records
    
@@ -92,14 +95,16 @@ DECLARE @msg VARCHAR(1000)
    END
    ELSE SET @columnHeadLine = @p_standalone_head_line
 
-   INSERT @tgtColumns ( columnName )
-   SELECT columnValue FROM tools__split2StringElements( @columnHeadLine, @p_col_sep )
+   INSERT @tgtColumns ( id_, columnName )
+   SELECT id_, columnValue FROM tools__split2StringElements( @columnHeadLine, @p_col_sep )
+   ORDER BY id_ 
+
    SELECT @tgtColCount = COUNT(1) FROM @tgtColumns
 
    -- construct INSERT statement 
 
    DECLARE tgtColCursor CURSOR FOR 
-      SELECT columnName FROM @tgtColumns
+      SELECT columnName FROM @tgtColumns ORDER BY id_
 
    OPEN tgtColCursor
    FETCH NEXT FROM tgtColCursor INTO @tgtColName 
@@ -160,13 +165,50 @@ DECLARE @msg VARCHAR(1000)
    SET @msg = N'bind var specs: ' + @bindVarsSpecs 
    EXEC pkg_std_log__dbx @msg 
 
+   -- Create table if appropiate 
    IF @p_create_table = 'Y'
    BEGIN 
       SET @msg = N'DDL: ' + @createTableStatement 
       EXEC pkg_std_log__dbx @msg 
 
-      EXEC sp_executeSql @createTableStatement
-   END;
+      BEGIN TRY 
+         EXEC sp_executeSql @createTableStatement
+          
+      END TRY
+      BEGIN CATCH 
+         SET @msg = N'On sp_executeSql From procedure ' + ISNULL( CAST( ERROR_PROCEDURE() AS NVARCHAR(100)), N'?' )
+            + N' line ' + ISNULL( CAST( ERROR_LINE() AS NVARCHAR(100)), N'?' )
+            + N' message: ' + ISNULL( CAST( ERROR_MESSAGE() AS NVARCHAR(1000)), N'?' )
+            + N' sev ' + ISNULL( CAST( ERROR_SEVERITY() AS NVARCHAR(100)), N'?' )
+            + N' state ' + ISNULL( CAST( ERROR_STATE() AS NVARCHAR(100)), N'?' )
+            + N' errno ' + ISNULL( CAST( ERROR_NUMBER() AS NVARCHAR(100)), N'?' )
+         EXEC pkg_std_log__err @msg 
+
+         RAISERROR( @msg ,16 ,1 )
+      END CATCH
+   END  
+
+   -- empty table if needed
+   IF @p_delete_before_insert2table = 'Y'
+   BEGIN
+      SET @shortDML =  N'DELETE FROM ' + @p_target_object 
+       --  + CHAR(10) + N'COMMIT' 
+       --  + CHAR(10) + N'END'
+      EXEC pkg_std_log__dbx @shortDML 
+
+      BEGIN TRY 
+         BEGIN transaction 
+         EXEC sp_executeSql @shortDML
+         COMMIT transaction
+         SET @msg = N'Rows deleted ' + CONVERT( NVARCHAR, @@ROWCOUNT)
+         EXEC pkg_std_log__info @msg 
+      END TRY
+      BEGIN CATCH 
+         SELECT @msg = dbo.tools__formatErrMsg( N'On delete target')
+         EXEC pkg_std_log__err @msg 
+
+      END CATCH
+   END  
 
    -- prepare INSERT statement 
    SET @insertStatement = @insertColumnClause + ' ' + @insertValueClause
