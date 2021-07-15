@@ -32,6 +32,9 @@ DECLARE @msg VARCHAR(1000)
    --,@insertHandle Int
    ,@loopIx Int
    ,@colIx Int
+   ,@colValCnt Int
+   ,@recSkipCnt Int = 0 
+   ,@recProcCnt Int = 0 
    ,@recordIx Int
    ,@createTableStatement NVARCHAR(4000)
    ,@recordCsv  NVARCHAR(4000)
@@ -43,6 +46,7 @@ DECLARE @msg VARCHAR(1000)
    ,@DOS_LINE_BREAK NVARCHAR(2)
    ,@UNIX_LINE_BREAK NVARCHAR(2)
    ,@lineBreakStyleIsDOS BIT
+   ,@rowCnt Int
    ,@recordCount Int
    ,@tgtColCount Int
    ,@deletedCnt  Int
@@ -55,8 +59,8 @@ DECLARE @msg VARCHAR(1000)
    EXEC pkg_std_log__dbx @msg 
 
    -- the following does not seem to work!
-   -- exec pkg_std_log__set_quota 'session_dbx_quota', 50
-   --
+   exec pkg_std_log__set_quota 'session_dbx_quota', 100
+   
    -- Determine line break style before splitting into lines
    --
    SET @DOS_LINE_BREAK = CAST( CHAR(13) + CHAR(10) AS NVARCHAR(2))
@@ -65,6 +69,9 @@ DECLARE @msg VARCHAR(1000)
    IF CHARINDEX( @DOS_LINE_BREAK, @p_csv_string) > 0 SET @lineBreakStyleIsDOS = 1
    ELSE  SET @lineBreakStyleIsDOS = 0
 
+   --
+   -- break donw input string into records 
+   --
    IF @lineBreakStyleIsDOS = 1
    BEGIN
       INSERT @records ( id_, columnValue )
@@ -87,10 +94,9 @@ DECLARE @msg VARCHAR(1000)
    -- or provided explicitly as input parameter
    IF @p_standalone_head_line IS NULL 
    BEGIN 
-      SELECT TOP 1 @columnHeadLine = columnValue FROM @records
-      DELETE TOP (1) FROM @records 
-      SET @msg = 'recordCount: ' + CAST( @recordCount AS NVARCHAR(10) ) 
-      EXEC pkg_std_log__dbx @msg
+      SELECT @columnHeadLine = columnValue FROM @records WHERE id_ = 1
+      DELETE FROM @records  FROM @records WHERE id_ = 1
+      UPDATE @records SET id_ = id_ - 1 -- make the first row to be id_ = 1 
    END
    ELSE SET @columnHeadLine = @p_standalone_head_line
 
@@ -99,6 +105,8 @@ DECLARE @msg VARCHAR(1000)
    ORDER BY id_ 
 
    SELECT @tgtColCount = COUNT(1) FROM @tgtColumns
+   SET @msg = 'tgtColCount: ' + CONVERT( NVARCHAR, @tgtColCount ) 
+   EXEC pkg_std_log__dbx @msg
 
    --
    -- construct fragments of INSERT statement , but also of CREATE TABLE 
@@ -160,10 +168,6 @@ DECLARE @msg VARCHAR(1000)
 
    SET @msg = N'column clause: ' + @insertColumnClause 
    EXEC pkg_std_log__dbx @msg 
-   --SET @msg = N'values clause: ' + @insertValueClause 
-   --EXEC pkg_std_log__dbx @msg 
-   --SET @msg = N'bind var specs: ' + @bindVarsSpecs 
-   --EXEC pkg_std_log__dbx @msg 
 
    --
    -- Create table if appropiate 
@@ -171,7 +175,7 @@ DECLARE @msg VARCHAR(1000)
    IF @p_create_table = 'Y'
    BEGIN 
       SET @msg = N'DDL: ' + @createTableStatement 
-      EXEC pkg_std_log__dbx @msg 
+      EXEC pkg_std_log__info @msg 
 
       BEGIN TRY 
          EXEC sp_executeSql @createTableStatement
@@ -232,26 +236,38 @@ DECLARE @msg VARCHAR(1000)
    DECLARE cursorRecords CURSOR FOR 
       SELECT id_, columnValue FROM @records ORDER BY id_ 
 
-   
+   BEGIN TRANSACTION 
+
    OPEN cursorRecords
    FETCH NEXT FROM cursorRecords INTO @recordIx, @recordCsv  
+   SET @insertValueClause = N''
 
    WHILE @@FETCH_STATUS = 0
    BEGIN
+      DELETE @columnValues
       INSERT @columnValues (id_, columnValue ) SELECT id_, columnValue 
       FROM tools__split2StringElements( @recordCsv, N';' )
+
+      SELECT @rowCnt = COUNT(1) FROM @columnValues
+      SET @msg = N'elems in recordCsv: ' + CONVERT( NVARCHAR, @rowCnt ) 
+      EXEC pkg_std_log__dbx @msg 
       --
       -- construct column literals of INSERT. Unfortunately it is not possible to use prepared statement
       --
       DECLARE cursorBindVars CURSOR FOR 
-         SELECT id_, columnValue FROM @columnValues ORDER BY id_ 
+         SELECT count(1) OVER (PARTITION BY NULL) colCount 
+         , id_, columnValue 
+         FROM @columnValues 
+         WHERE id_ <= @tgtColCount
+         ORDER BY id_ 
+
       OPEN cursorBindVars
-      FETCH NEXT FROM cursorBindVars INTO @colIx, @columnLiteral
+      FETCH NEXT FROM cursorBindVars INTO @colValCnt, @colIx, @columnLiteral
+
       WHILE @@FETCH_STATUS = 0
-      BEGIN
- 
+      BEGIN 
          SET @insertValueClause = 
-           CASE WHEN @colIx = 1
+           CASE WHEN LEN( @insertValueClause ) = 0  
            THEN 
               N' VALUES ( '
            ELSE 
@@ -259,19 +275,37 @@ DECLARE @msg VARCHAR(1000)
            END
            + N'''' + @columnLiteral + N''''
          
-         SET @insertStatement = @insertColumnClause + N' ' + @insertColumnClause
-         EXEC sp_executeSql 
 
-         FETCH NEXT FROM cursorBindVars INTO @colIx, @columnLiteral 
+         FETCH NEXT FROM cursorBindVars INTO @colValCnt, @colIx, @columnLiteral 
       END
       CLOSE cursorBindVars
+      SET @insertValueClause += N')'
+
+      IF @colValCnt = @tgtColCount
+      BEGIN 
+         SET @insertStatement = @insertColumnClause + N' ' + @insertValueClause
+         --BEGIN TRANSACTION 
+         EXEC sp_executeSql 
+         --COMMIT TRANSACTION
+         EXEC pkg_std_log__dbx @insertStatement 
+      END
+      ELSE 
+      BEGIN
+         SET @recSkipCnt += 1 
+      END
 
       FETCH NEXT FROM cursorRecords INTO @recordIx, @recordCsv  
+      SET @insertValueClause = N''
+
    END
    CLOSE cursorRecords
+   
+   COMMIT TRANSACTION
 
-   SELECT @msg = N'Records processed: ' + CONVERT( NVARCHAR, COUNT(1)) FROM @records
-   EXEC pkg_std_log__dbx @msg 
+   SET @msg = N'Records skipped: ' + CONVERT( NVARCHAR, @recSkipCnt)  
+   EXEC pkg_std_log__info @msg 
+   SET @msg = N'Records processed: ' + CONVERT( NVARCHAR, @recProcCnt) 
+   EXEC pkg_std_log__info @msg 
 
    --EXEC sp_unprepare @insertHandle
 END;

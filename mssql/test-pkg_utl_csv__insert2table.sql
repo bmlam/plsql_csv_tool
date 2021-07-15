@@ -5,7 +5,8 @@ EXEC pkg_utl_csv__insert2table @p_target_object= 'dummy_table2', @p_csv_string =
 apple;1.5;tasty fruit
 banana;;another tasty fruit
 chip;;no price
-;;;
+;;
+;;;trailer 
 ;3;no such product
 ' 
 , @p_create_table = 'Y'
