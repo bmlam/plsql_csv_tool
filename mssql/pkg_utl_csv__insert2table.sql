@@ -59,7 +59,7 @@ DECLARE @msg VARCHAR(1000)
    EXEC pkg_std_log__dbx @msg 
 
    -- the following does not seem to work!
-   exec pkg_std_log__set_quota 'session_dbx_quota', 100
+   exec pkg_std_log__set_quota 'session_dbx_quota', 20
    
    -- Determine line break style before splitting into lines
    --
@@ -281,11 +281,19 @@ DECLARE @msg VARCHAR(1000)
       CLOSE cursorBindVars
       SET @insertValueClause += N')'
 
-      IF @colValCnt = @tgtColCount
+      IF @colValCnt = @tgtColCount -- there may be more column values in CSV but we excluded them beforehand
       BEGIN 
          SET @insertStatement = @insertColumnClause + N' ' + @insertValueClause
-         --BEGIN TRANSACTION 
-         EXEC sp_executeSql 
+
+         BEGIN TRY 
+           EXEC sp_executeSql @insertStatement
+           SET @recProcCnt += 1 
+         END TRY
+         BEGIN CATCH 
+            SELECT @msg = dbo.tools__formatErrMsg( N'On INSERT target')
+            EXEC pkg_std_log__err @msg
+         END CATCH 
+
          --COMMIT TRANSACTION
          EXEC pkg_std_log__dbx @insertStatement 
       END
