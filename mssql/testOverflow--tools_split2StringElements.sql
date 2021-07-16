@@ -1,4 +1,0 @@
-use testdb1
-GO
-
- select * from tools__split2StringElements( N'apple;bananaloooonnnngbananaloooonnnngbananaloooonnnngbananaloooonnnngbananaloooonnnngbananaloooonnnngbananaloooonnnngbananaloooonnnng;orange' , default )
